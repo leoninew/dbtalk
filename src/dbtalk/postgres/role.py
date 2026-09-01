@@ -20,7 +20,7 @@ from dbtalk.database.dsn import ParsedDsn, dsn_from_environment, parse_dsn
 from dbtalk.database.models import DatabaseOperationError
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
-Profile = Literal["read-only", "ddl", "read-write", "dml"]
+Profile = Literal["readonly", "readwrite", "migrator"]
 _IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]{0,62}$")
 _ENVIRONMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -176,7 +176,7 @@ def drop_command(
 )
 @click.option(
     "--profile",
-    type=click.Choice(("read-only", "ddl", "read-write", "dml"), case_sensitive=True),
+    type=click.Choice(("readonly", "readwrite", "migrator"), case_sensitive=True),
     help="Fixed authorization profile. Mutually exclusive with --privilege.",
 )
 @click.option(
@@ -237,7 +237,7 @@ def grant_command(
 )
 @click.option(
     "--profile",
-    type=click.Choice(("read-only", "ddl", "read-write", "dml"), case_sensitive=True),
+    type=click.Choice(("readonly", "readwrite", "migrator"), case_sensitive=True),
     help="Fixed authorization profile. Mutually exclusive with --privilege.",
 )
 @click.option(
@@ -442,7 +442,7 @@ def _change_profile(
             resource_type, quoted_resource, quoted_role, profile, action
         ):
             connection.exec_driver_sql(statement)
-        if profile == "dml":
+        if profile == "migrator":
             connection.exec_driver_sql(
                 f"ALTER ROLE {quoted_role} {'CREATEDB' if action == 'GRANT' else 'NOCREATEDB'}"
             )
@@ -489,20 +489,19 @@ def _profile_statements(
     direction = f"TO {quoted_role}" if action == "GRANT" else f"FROM {quoted_role}"
     if resource_type == "database":
         privileges = {
-            "read-only": "CONNECT",
-            "ddl": "CONNECT, CREATE",
-            "read-write": "CONNECT, CREATE, TEMPORARY",
-            "dml": "CONNECT, CREATE, TEMPORARY",
+            "readonly": "CONNECT",
+            "readwrite": "CONNECT",
+            "migrator": "CONNECT, CREATE",
         }[profile]
         return (f"{action} {privileges} ON DATABASE {quoted_resource} {direction}",)
     if resource_type != "schema":
         raise DatabaseOperationError("PostgreSQL authorization resource is invalid")
     statements = [f"{action} USAGE ON SCHEMA {quoted_resource} {direction}"]
-    if profile in {"ddl", "read-write", "dml"}:
+    if profile == "migrator":
         statements.append(f"{action} CREATE ON SCHEMA {quoted_resource} {direction}")
-    if profile in {"read-only", "ddl"}:
+    if profile == "readonly":
         statements.append(f"{action} SELECT ON ALL TABLES IN SCHEMA {quoted_resource} {direction}")
-    elif profile in {"read-write", "dml"}:
+    else:
         statements.append(
             f"{action} SELECT, INSERT, UPDATE, DELETE ON ALL TABLES "
             f"IN SCHEMA {quoted_resource} {direction}"
@@ -580,7 +579,7 @@ def _reject_current_role(connection: Connection, role_name: str) -> None:
 
 
 def _profile(profile: str) -> Profile:
-    if profile in {"read-only", "ddl", "read-write", "dml"}:
+    if profile in {"readonly", "readwrite", "migrator"}:
         return profile  # type: ignore[return-value]
     raise DatabaseOperationError("authorization profile is invalid")
 

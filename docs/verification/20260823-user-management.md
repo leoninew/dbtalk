@@ -1,9 +1,15 @@
 # 用户管理与常规授权验证
-最后修改时间: 2026-08-23 15:30:31
+最后修改时间: 2026-09-01 22:41:50
 
 Review status: Accepted
 Flow mode: standard
 Stage: Verification
+
+## 后续设计说明
+
+本验证结论只覆盖 2026-08-23 首版的 `read-only` / `read-write` profile 与当时的实现。后续 profile 收敛为 `readonly`、`readwrite`、`migrator`，其实现与验证记录见 [2026-09-01 授权与权限管理验证](20260901-authorization-grant-revoke.md)。
+
+当前 `migrator` 包含 DDL、DML 与建库能力，不添加 `GRANT OPTION` 或角色管理能力；MySQL 使用全局 `CREATE ON *.*`，PostgreSQL 使用 role 全局 `CREATEDB`，并在撤销时恢复 `NOCREATEDB`。本节不改变本记录所述的历史测试事实。
 
 ## Requirement alignment
 

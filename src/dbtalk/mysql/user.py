@@ -20,7 +20,7 @@ from dbtalk.database.dsn import ParsedDsn, dsn_from_environment, parse_dsn
 from dbtalk.database.models import DatabaseOperationError
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
-Profile = Literal["read-only", "ddl", "read-write", "dml"]
+Profile = Literal["readonly", "readwrite", "migrator"]
 _USER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_.$-]{0,31}$")
 _HOST_PATTERN = re.compile(
     r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*$"
@@ -186,7 +186,7 @@ def drop_command(
 )
 @click.option(
     "--profile",
-    type=click.Choice(("read-only", "ddl", "read-write", "dml"), case_sensitive=True),
+    type=click.Choice(("readonly", "readwrite", "migrator"), case_sensitive=True),
     help="Fixed authorization profile. Mutually exclusive with --privilege.",
 )
 @click.option(
@@ -242,7 +242,7 @@ def grant_command(
 )
 @click.option(
     "--profile",
-    type=click.Choice(("read-only", "ddl", "read-write", "dml"), case_sensitive=True),
+    type=click.Choice(("readonly", "readwrite", "migrator"), case_sensitive=True),
     help="Fixed authorization profile. Mutually exclusive with --privilege.",
 )
 @click.option(
@@ -481,7 +481,7 @@ def _change_profile(
         statement = f"{action} {privileges} ON {quoted_database}.* "
         statement += "TO :user@:host" if action == "GRANT" else "FROM :user@:host"
         connection.execute(text(statement), {"user": user_name, "host": host})
-        if profile == "dml":
+        if profile == "migrator":
             global_statement = f"{action} CREATE ON *.* "
             global_statement += "TO :user@:host" if action == "GRANT" else "FROM :user@:host"
             connection.execute(text(global_statement), {"user": user_name, "host": host})
@@ -563,20 +563,16 @@ def _reject_current_account(connection: Connection, user_name: str, host: str) -
 
 
 def _profile(profile: str) -> Profile:
-    if profile in {"read-only", "ddl", "read-write", "dml"}:
+    if profile in {"readonly", "readwrite", "migrator"}:
         return profile  # type: ignore[return-value]
     raise DatabaseOperationError("authorization profile is invalid")
 
 
 def _profile_privileges(profile: Profile) -> str:
     profiles = {
-        "read-only": "SELECT, SHOW VIEW",
-        "ddl": "SELECT, SHOW VIEW, CREATE, ALTER, DROP, INDEX, CREATE VIEW, TRIGGER",
-        "read-write": (
-            "SELECT, SHOW VIEW, CREATE, ALTER, DROP, INDEX, CREATE VIEW, TRIGGER, "
-            "INSERT, UPDATE, DELETE"
-        ),
-        "dml": (
+        "readonly": "SELECT, SHOW VIEW",
+        "readwrite": "SELECT, SHOW VIEW, INSERT, UPDATE, DELETE",
+        "migrator": (
             "SELECT, SHOW VIEW, CREATE, ALTER, DROP, INDEX, CREATE VIEW, TRIGGER, "
             "INSERT, UPDATE, DELETE"
         ),

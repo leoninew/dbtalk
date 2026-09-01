@@ -1,5 +1,5 @@
 # 授权与权限管理
-最后修改时间: 2026-09-01 12:06:49
+最后修改时间: 2026-09-01 22:41:50
 
 Review status: Accepted
 Flow mode: standard
@@ -7,14 +7,14 @@ Stage: Requirement
 
 ## Background
 
-当前 MySQL 与 PostgreSQL 都提供独立的 `grant` / `revoke` 命令，但命令只支持固定的 `read-only` 与 `read-write` profile。固定 profile 能覆盖常规应用访问，却无法表达少量、零散的权限需求；另一方面，使用 `dbtalk database exec --write` 执行额外 `GRANT` / `REVOKE` SQL 会绕过权限命令的主体、资源和操作审计语义。
+当前 MySQL 与 PostgreSQL 都提供独立的 `grant` / `revoke` 命令。固定 profile 应覆盖只读、常规应用读写和迁移三类主体；另一方面，使用 `dbtalk exec --write` 执行额外 `GRANT` / `REVOKE` SQL 会绕过权限命令的主体、资源和操作审计语义。
 
 常规权限操作应集中在 `grant` / `revoke`：主体由 `user` / `role` 命令管理，schema/database 由 `schema` 命令管理，`grant` / `revoke` 只负责把权限授予或撤销给明确主体。通用 `database exec` 不作为常规权限管理入口；仅对权限命令未提供专门语义的其他管理 SQL 保留受审核的兜底用途。
 
 ## Goal
 
 1. 扩展 MySQL 与 PostgreSQL 的 `grant` / `revoke`，同时支持：
-   - 粗粒度、稳定且可审计的常规 profile，例如 `read-only`、`ddl`、`dml`、`read-write`；
+   - 粗粒度、稳定且可审计的常规 profile：`readonly`、`readwrite`、`migrator`；
    - 由数据库服务端校验的细粒度单项权限，满足零散授权和撤销需求。
 2. 保持职责边界：
    - `user` / `role` 只管理登录主体及其生命周期；
@@ -42,7 +42,7 @@ Stage: Requirement
      --dsn-env POSTGRES_ADMIN_DSN \
      --role app_role \
      --schema app \
-     --profile read-only \
+     --profile readonly \
      --yes
    ```
 
@@ -66,14 +66,13 @@ Stage: Requirement
 
 ### Profile
 
-Profile 是由工具维护的固定权限集合，不允许调用者修改集合内容。至少需要评估以下常规 profile：
+Profile 是由工具维护的固定权限集合，不允许调用者修改集合内容：
 
-- `read-only`：最小只读权限；
-- `ddl`：包含 `read-only`，并增加创建或修改数据库对象所需的 DDL 权限；
-- `read-write`：包含 `ddl`，并增加常规 DML 权限，但不包含 `CREATE DATABASE`；
-- `dml`：包含 `read-write`，并增加 `CREATE DATABASE` 能力；本次变更不承诺旧命令或旧行为的历史兼容。
+- `readonly`：查询权限；MySQL 为 `SELECT, SHOW VIEW`，PostgreSQL schema 为现有表的 `SELECT`。
+- `readwrite`：包含 `readonly`，并增加常规 `SELECT, INSERT, UPDATE, DELETE`；PostgreSQL schema 同时包含现有 sequence 的 `USAGE, SELECT, UPDATE`。
+- `migrator`：包含 `readwrite`，并增加目标 database/schema 的 DDL，以及建库能力。它不添加 `GRANT OPTION` 或角色管理能力。
 
-Profile 按权限集合严格组织为 `dml > read-write > ddl > read-only`，表示前者包含后者的全部权限并增加额外权限。其中 `read-write` 是不含 `CREATE DATABASE` 能力的 `dml` 版本，但仍包含完整的 `ddl` 权限。
+Profile 按权限集合组织为 `migrator > readwrite > readonly`。建库能力按方言映射：MySQL 使用全局 `CREATE ON *.*`，因此是实例级能力；PostgreSQL 设置 role 的全局 `CREATEDB` 属性，而不是某个 database/schema 上的普通授权。
 
 `grant` / `revoke` 的 profile 与 privilege 模式互斥：一次调用要么指定 `--profile PROFILE`，要么重复指定 `--privilege NAME`。这样撤销 profile 时不会产生“是否同时撤销额外单项权限”的歧义。
 
@@ -87,13 +86,13 @@ Profile 按权限集合严格组织为 `dml > read-write > ddl > read-only`，�
 
 常规 profile 的权限集合仍由 dbtalk 固定维护：
 
-- PostgreSQL profile 目标为 database/schema；`dml` 包含数据库原生的建库能力，`read-write` 不包含该能力；具体由数据库方言和管理 DSN 映射到对应原生权限或角色属性；更细的对象级权限可以通过无 allowlist 的细粒度模式传给数据库；
-- MySQL profile 目标为 database；细粒度权限由数据库自身权限校验。
+- PostgreSQL profile 目标为 database/schema：`readonly` 和 `readwrite` 提供相应的连接、schema 和既有对象权限；`migrator` 追加 database/schema DDL，并设置全局 `CREATEDB`。撤销 `migrator` 会将 role 设为 `NOCREATEDB`；更细的对象级权限可以通过无 allowlist 的细粒度模式传给数据库；
+- MySQL profile 目标为 database：`migrator` 在目标库的 DDL/DML 之外追加全局 `CREATE ON *.*`。细粒度权限由数据库自身权限校验。
 
 ## Acceptance
 
 - [ ] MySQL 与 PostgreSQL 均提供同级的 `grant` / `revoke` 权限命令，帮助文本列出 profile 与细粒度权限模式。
-- [ ] `grant` / `revoke` 支持 `read-only`、`ddl`、`read-write`、`dml` profile；权限集合严格按 `dml > read-write > ddl > read-only` 包含，`read-write` 是不含 `CREATE DATABASE` 的 `dml` 版本，但包含 `ddl`。
+- [ ] `grant` / `revoke` 支持 `readonly`、`readwrite`、`migrator` profile；权限集合按 `migrator > readwrite > readonly` 包含。`migrator` 具有 DDL、DML 和建库能力，但不添加 `GRANT OPTION` 或角色管理能力。
 - [ ] profile 模式与 `--privilege` 模式互斥；`--privilege` 可重复指定，不由 dbtalk 维护 privilege allowlist，具体合法性由数据库服务端校验。
 - [ ] 每条授权/撤销命令必须提供明确 DSN 和目标 role/user；目标 schema/database 可选，未提供时使用当前 DSN 指向的 schema/database。PostgreSQL 使用 database/schema 资源参数，MySQL 使用 database 资源参数。
 - [ ] 撤销 profile 或单项权限只作用于请求的权限集合，不隐式撤销其他 profile 或额外单项授权。
@@ -116,8 +115,8 @@ Profile 按权限集合严格组织为 `dml > read-write > ddl > read-only`，�
 - 每条授权语句都必须绑定明确 DSN 和目标 role/user；目标 schema/database 可省略，省略时使用当前 DSN 指向的资源。
 - `user` / `role` 负责主体管理，不隐式授予权限；`schema` 负责 MySQL schema/database 与 PostgreSQL schema/database 管理，不承担授权逻辑。
 - 授权模型采用“固定 profile + 由数据库服务端校验的细粒度 privilege”双层结构。
-- 正式 profile 包括 `read-only`、`ddl`、`read-write` 和 `dml`，严格按 `dml > read-write > ddl > read-only` 的权限集合包含关系组织；`read-write` 是不含 `CREATE DATABASE` 能力的 `dml` 版本，但包含完整的 `ddl` 权限，且本次变更不做历史行为兼容承诺。
-- `dml` 授予数据库原生的建库能力，`read-write` 不授予该能力；数据库/schema 生命周期仍由 `schema` 命令管理。
+- 正式 profile 固定为 `readonly`、`readwrite` 和 `migrator`，按 `migrator > readwrite > readonly` 组织，不保留旧 profile 名称兼容层。
+- `migrator` 授予目标范围的 DDL/DML 和数据库原生的建库能力，但不授予 `GRANT OPTION` 或角色管理能力；数据库/schema 生命周期仍由 `schema` 命令管理。
 - `--profile` 与 `--privilege` 一次调用互斥；细粒度权限可通过重复 `--privilege` 指定。
 - 增加统一的 `permissions list/show` 权限查看能力：`list` 默认展示当前 DSN 可见权限，可按主体和 schema/database 筛选；`show` 要求主体，资源筛选可选；两者直接展示数据库原生权限查询结果。
 - 以 `schema` 命令替代旧的 `database` 命令；MySQL 与 PostgreSQL 均通过该命令管理 schema/database，旧 `database` 命令移除。
@@ -127,6 +126,7 @@ Profile 按权限集合严格组织为 `dml > read-write > ddl > read-only`，�
 ## Risk
 
 - profile 与细粒度权限叠加后，撤销语义若设计不清，可能误撤销应用仍依赖的权限或造成权限残留。
+- `migrator` 的建库能力不是资源局部权限：MySQL 的全局 `CREATE` 与 PostgreSQL 的 `CREATEDB` 都会影响同一实例中的其他 database。
 - 不维护 privilege allowlist 会把高风险判断交给数据库管理权限；管理 DSN 一旦权限过大，任意细粒度授权都可能扩大访问范围。
 - MySQL 与 PostgreSQL 同名权限的语义不同，必须逐方言定义映射并用测试锁定。
 - PostgreSQL 未来对象的权限继承涉及 default privileges；当前 profile 只作用于已有对象时，文档必须明确边界。
@@ -137,16 +137,12 @@ Profile 按权限集合严格组织为 `dml > read-write > ddl > read-only`，�
 - 用户要求使用 Specflow 标准模式记录任务，当前停留在 Requirement，不开始实现。
 - 用户要求命令职责清晰：`database` 管理 schema/数据库对象，`grant/revoke` 处理权限，`user/role` 处理用户管理。
 - 用户明确认为权限应由 `grant/revoke` 统一处理，不应通过 `grant` 基本 profile 后再用 `exec` 补权限。
-- 用户要求同时满足零散 grant/revoke 需求和粗粒度常规 profile（只读、读写、DML 等）能力。
-- 用户确认新增正式 `dml` profile，并增加独立 `ddl` profile。
-- 用户确认 `read-write` 保持当前 DML 语义，本次变更不做历史兼容。
+- 用户要求同时满足零散 grant/revoke 需求和粗粒度常规 profile（只读、读写、迁移）能力。
 - 用户确认 `--profile` 与 `--privilege` 互斥。
 - 用户确认 PostgreSQL 不下沉到 table/sequence 等对象级细粒度，过细粒度权限由 `database exec` 兜底。
 - 用户要求增加 `grant/revoke list/show` 权限查看命令。
-- 用户确认采用“大权限包含小权限”的 profile 组织方式，`dml` 包含 `ddl`。
 - 用户确认细粒度 privilege 不由 dbtalk allowlist 控制，只要当前 DSN 有权即可执行；授权/撤销必须指定 DSN 和目标 role/user，目标 schema/database 缺省时使用当前 DSN 指向的资源。
 - 用户确认使用统一的 `permissions list/show` 查看权限，直接展示数据库原生命令查询结果。
 - 用户确认将 `database` 命令改为 `schema` 命令，MySQL 与 PostgreSQL 均使用该命令管理 schema/database，并移除旧 `database` 命令；权限仍由 `grant/revoke` 管理。
-- 用户确认 `read-write` 不包含建库权限（`CREATE DATABASE`）。
 - 用户采纳 `permissions list/show` 的参数建议：`list` 默认展示当前 DSN 可见权限并支持主体、schema/database 筛选；`show` 要求主体，资源筛选可选。
-- 用户进一步明确 profile 严格按 `dml > read-write > ddl > read-only` 包含，`read-write` 是不含 `CREATE DATABASE` 能力但包含 `ddl` 的 `dml` 版本。
+- 用户最终采纳 `readonly`、`readwrite`、`migrator`：`readonly` 只读，`readwrite` 用于常规应用增删改查，`migrator` 包含 DDL、DML 和建库能力，不添加 `GRANT OPTION`。

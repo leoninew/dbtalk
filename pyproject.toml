@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "dbtalk"
-version = "0.17.0"
+version = "0.18.2"
 description = "MySQL and PostgreSQL backup/restore plus JSONL database transfer CLI."
 readme = "README.md"
 license = { file = "LICENSE" }

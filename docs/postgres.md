@@ -99,7 +99,7 @@ export APP_PASSWORD='application-password'
 uv run dbtalk postgres role create --dsn-env POSTGRES_ADMIN_DSN \
   --role app_role --password-env APP_PASSWORD
 uv run dbtalk postgres grant --dsn-env POSTGRES_ADMIN_DSN \
-  --role app_role --schema app --profile read-write --yes
+  --role app_role --schema app --profile readwrite --yes
 
 uv run dbtalk postgres grant --dsn-env POSTGRES_ADMIN_DSN \
   --role app_role --schema app --privilege USAGE \
@@ -108,7 +108,7 @@ uv run dbtalk postgres grant --dsn-env POSTGRES_ADMIN_DSN \
 
 新 role 默认是 `LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`。密码只能通过 `--password-env` 引用的环境变量输入；不会显示在命令输出、日志或错误中。
 
-授权目标支持 database 或 schema，未指定时使用 DSN database。profile 按 `dml > read-write > ddl > read-only` 包含：`read-only` 提供基础只读权限；`ddl` 增加 schema/object DDL；`read-write` 再增加常规 DML；`dml` 再增加数据库原生建库能力（通常映射为 role 的 `CREATEDB`），而 `read-write` 不包含该能力。也可重复指定 `--privilege NAME` 使用数据库服务端支持的细粒度权限；它与 `--profile` 互斥。schema profile 不修改 default privileges，因此不会自动覆盖未来创建的表或序列。
+授权目标支持 database 或 schema，未指定时使用 DSN database。profile 按 `migrator > readwrite > readonly` 包含：`readonly` 提供基础只读权限；以 schema 为目标时，`readwrite` 再提供现有表的 `SELECT, INSERT, UPDATE, DELETE` 以及 sequence 的 `USAGE, SELECT, UPDATE`；`migrator` 再授予 schema `CREATE`，并在 database 目标上授予 `CREATE`，同时设置 role 的全局 `CREATEDB` 属性以允许建库。`CREATEDB` 不是某个 database/schema 上的普通授权，撤销 `migrator` 会将该 role 设为 `NOCREATEDB`。固定 profile 不添加 `GRANT OPTION` 或角色管理能力。schema profile 不修改 default privileges，因此不会自动覆盖未来创建的表或序列；migrator 必须拥有它需要 `ALTER` 或 `DROP` 的现有对象。
 
 ```bash
 uv run dbtalk postgres permissions list --dsn-env POSTGRES_ADMIN_DSN

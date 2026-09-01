@@ -1,11 +1,17 @@
 # 用户管理与常规授权计划
-最后修改时间: 2026-08-23 15:21:43
+最后修改时间: 2026-09-01 22:41:50
 
 ---
 Review status: Accepted
 Flow mode: standard
 Stage: Plan
 ---
+
+## 后续设计说明
+
+本计划记录的是 2026-08-23 首版实现所采用的双 profile 映射，不追溯修改当时的实施或验证结论。当前 profile 设计以 [授权与权限管理计划](20260901-authorization-grant-revoke.md) 为准：`readonly`、`readwrite`、`migrator`。
+
+`migrator` 包含 DDL、DML 与建库能力，不添加 `GRANT OPTION` 或角色管理能力。MySQL 使用全局 `CREATE ON *.*` 支持建库；PostgreSQL 使用 role 全局 `CREATEDB` 属性，撤销时设为 `NOCREATEDB`。
 
 ## Requirement basis
 

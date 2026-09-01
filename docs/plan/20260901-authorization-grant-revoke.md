@@ -1,5 +1,5 @@
 # 授权与权限管理计划
-最后修改时间: 2026-09-01 14:08:18
+最后修改时间: 2026-09-01 22:41:50
 
 Review status: Accepted
 Flow mode: standard
@@ -10,7 +10,7 @@ Stage: Plan
 本计划实现已接受的 [授权与权限管理需求](../requirement/20260901-authorization-grant-revoke.md)。需求已确认：
 
 - 权限统一由 `grant` / `revoke` 处理，主体生命周期由 `user` / `role` 处理。
-- profile 严格按 `dml > read-write > ddl > read-only` 包含；`read-write` 是不含 `CREATE DATABASE` 但包含 `ddl` 的 `dml` 版本。
+- profile 固定为 `readonly`、`readwrite`、`migrator`，按 `migrator > readwrite > readonly` 包含；`migrator` 包含 DDL、DML 和建库能力，但不添加 `GRANT OPTION` 或角色管理能力。
 - 细粒度 `--privilege` 不由 dbtalk allowlist 预先限制，由数据库服务端校验；`--profile` 与 `--privilege` 互斥。
 - 授权/撤销必须提供明确 DSN 和目标主体；目标 schema/database 可省略，省略时使用当前 DSN 指向的资源。
 - 增加统一的 `permissions list/show`，直接展示 MySQL/PostgreSQL 原生权限查询结果。
@@ -42,7 +42,7 @@ Stage: Plan
 两种方言的授权和撤销均要求一个明确 DSN、目标主体和 `--yes`。profile 与 privilege 二选一：
 
 ```text
---profile read-only|ddl|read-write|dml
+--profile readonly|readwrite|migrator
 或
 --privilege NAME（可重复）
 ```
@@ -53,10 +53,12 @@ Stage: Plan
 
 ### Profile mapping
 
-实现以权限集合包含关系为准：`read-only` 是基础集合，`ddl` 在其上增加 DDL，`read-write` 在 `ddl` 上增加常规 DML，`dml` 在 `read-write` 上增加建库能力。具体原生映射按方言实现并测试锁定：
+实现以权限集合包含关系为准：`readonly` 是基础集合，`readwrite` 在其上增加常规 DML，`migrator` 在其上增加 DDL 和建库能力。具体原生映射按方言实现并测试锁定：
 
-- MySQL：数据库对象授权使用 `database.*`；`read-only`、`ddl`、`read-write`、`dml` 分别映射到包含关系的原生权限集合，其中 `dml` 增加数据库创建所需权限。
-- PostgreSQL：database/schema profile 使用对应的 `CONNECT`、`TEMPORARY`、schema `USAGE`、DDL `CREATE`、现有表/序列 DML 权限；`dml` 需要映射 PostgreSQL 的建库能力（通常是 role 的 `CREATEDB` 属性），而 `read-write` 不得授予该能力。
+- MySQL：数据库对象授权使用 `database.*`；`readonly` 为 `SELECT, SHOW VIEW`，`readwrite` 追加 `INSERT, UPDATE, DELETE`，`migrator` 追加目标库 DDL，并额外执行全局 `CREATE ON *.*` 以允许建库。MySQL 不将建库与对象创建分离，该权限是实例级能力。
+- PostgreSQL：database/schema profile 使用对应的 `CONNECT`、schema `USAGE`、DDL `CREATE`、现有表/序列 DML 权限；`migrator` 额外执行 `ALTER ROLE ... CREATEDB`，撤销时执行 `NOCREATEDB`。`CREATEDB` 是 role 全局属性，不是普通 database/schema grant。
+
+三个 profile 都不授予 `GRANT OPTION` 或角色管理能力。
 
 Profile 的撤销只撤销该 profile 映射的权限；不得因为撤销较小 profile 而删除由更大 profile 或独立 privilege 授予的权限。若数据库无法区分权限来源，Plan 实施时必须选择可审计的直接映射策略并记录残留/重叠语义。
 
@@ -92,7 +94,7 @@ Profile 的撤销只撤销该 profile 映射的权限；不得因为撤销较小
    - 更新内部导入、测试名称、帮助文本和命令输出；保留 `src/dbtalk/database/` 内部实现包。
 
 4. 更新测试。
-    - 扩展 `tests/test_user_management.py`：profile 包含关系、`dml`/`read-write`/`ddl` 映射、细粒度 privilege 透传、资源缺省、模式互斥、撤销范围和数据库错误。
+    - 扩展 `tests/test_user_management.py`：三个 profile 的方言映射、MySQL 全局 `CREATE`、PostgreSQL `CREATEDB`/`NOCREATEDB`、细粒度 privilege 透传、资源缺省、模式互斥、撤销范围和数据库错误。
    - 新增权限查询测试：list/show 参数、筛选、原生结果透传、凭据脱敏和错误映射。
     - 更新 `tests/test_database_administration.py`、`tests/test_cli.py`、数据库 transfer/operation 测试及相关帮助断言，验证根级 `query/exec/export/import`、`schema` 命令和旧方言/root `database` 命令移除。
 
@@ -129,13 +131,13 @@ Profile 的撤销只撤销该 profile 映射的权限；不得因为撤销较小
 
 1. 运行权限和命令迁移专项测试，再运行完整 `pytest`。
 2. 使用项目入口运行 `make check`，覆盖 Ruff、Mypy；执行 `git diff --check` 检查文档和源码空白。
-3. 在显式准备的 MySQL/PostgreSQL 环境中验证 profile 原生权限、`CREATE DATABASE` 差异、资源缺省、细粒度 privilege 服务端校验，以及 `permissions list/show` 的原生输出；未具备环境时如实记录未执行。
+3. 在显式准备的 MySQL/PostgreSQL 环境中验证三个 profile 的原生权限、`migrator` 建库和撤销后的失败、资源缺省、细粒度 privilege 服务端校验，以及 `permissions list/show` 的原生输出；未具备环境时如实记录未执行。
 4. 复查所有帮助、日志和错误输出，确认没有完整 DSN、密码或密码哈希；确认根级 `query/exec/export/import` 可用，且 `dbtalk database`、`dbtalk mysql database`、`dbtalk postgres database` 均已移除。
 
 ## Risks and rollback
 
-- PostgreSQL `CREATEDB` 是 role 属性而非普通 database/schema grant；将其纳入 `dml` 可能影响主体全局建库能力，需要在实现和文档中明确其方言差异及撤销影响。
-- MySQL 的 database 级 `CREATE` 与真正创建 database 的能力可能受服务器权限模型影响；不能把 profile 成功误报为一定可建库。
+- PostgreSQL `CREATEDB` 是 role 属性而非普通 database/schema grant；将其纳入 `migrator` 会影响主体全局建库能力，撤销 `migrator` 会直接设为 `NOCREATEDB`。
+- MySQL 创建 database 需要全局 `CREATE ON *.*`，其影响超出目标 database；不能将该 profile 用作普通应用账号。
 - 细粒度 privilege 不由 dbtalk allowlist 限制，管理 DSN 的权限决定实际风险；错误输入可能触发数据库拒绝或高权限授权，必须保留 `--yes` 和非原始 SQL 参数边界。
 - profile 叠加后的撤销可能与数据库无法区分授权来源冲突；需要测试并记录直接撤销的实际语义。
 - 方言 `database`→`schema` 是破坏性 CLI 变更；回滚需恢复旧命令注册和文档，同时不自动回滚已执行的授权或 schema 变更。
@@ -143,7 +145,7 @@ Profile 的撤销只撤销该 profile 映射的权限；不得因为撤销较小
 ## Blockers and assumptions
 
 - 假设用户接受移除 `dbtalk database`、`dbtalk mysql database` 与 `dbtalk postgres database`，将通用操作提升为根级命令。
-- 假设 profile 的建库能力可以按方言映射到角色属性或原生权限；若 PostgreSQL `CREATEDB` 的全局影响不符合预期，需在 Implementation 前重新确认 profile 设计。
+- 假设 `migrator` 的实例级建库能力适合受控迁移账号；普通应用使用 `readwrite`。
 - 当前没有实现阻塞项；上述建库权限语义是高风险实现假设，应在真实数据库验证前确认。
 
 ## User review notes
@@ -154,3 +156,4 @@ Profile 的撤销只撤销该 profile 映射的权限；不得因为撤销较小
 - 用户明确要求开始 Implementation；本轮完成计划范围内的代码、测试与文档改动后停在实施阶段，等待后续 Verification 指令。
 - Implementation 已完成代码、测试、文档和本地只读集成检查；尚未进入 Verification 阶段。
 - 用户明确要求完成 Specflow Verification；已完成验证并生成对应 verification 文档。
+- 用户最终将 profile 收敛为 `readonly`、`readwrite`、`migrator`，并明确 `migrator` 需要建库能力且不添加 `GRANT OPTION`。

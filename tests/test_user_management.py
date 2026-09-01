@@ -132,21 +132,25 @@ def test_mysql_profile_quotes_database_and_protects_current_identity(
     engine = FakeEngine(connection)
     monkeypatch.setattr(mysql_user, "create_engine", lambda _: engine)
 
-    mysql_user.grant_profile(mysql_dsn(), "app_user", "app.example", 'app "quoted"', "read-write")
+    mysql_user.grant_profile(mysql_dsn(), "app_user", "app.example", 'app "quoted"', "migrator")
 
     assert connection.statements[0] == "SELECT CURRENT_USER()"
     assert connection.statements[1] == (
         "GRANT SELECT, SHOW VIEW, CREATE, ALTER, DROP, INDEX, CREATE VIEW, TRIGGER, "
         'INSERT, UPDATE, DELETE ON `app "quoted"`.* TO :user@:host'
     )
-    assert connection.parameters == [{"user": "app_user", "host": "app.example"}]
+    assert connection.statements[2] == "GRANT CREATE ON *.* TO :user@:host"
+    assert connection.parameters == [
+        {"user": "app_user", "host": "app.example"},
+        {"user": "app_user", "host": "app.example"},
+    ]
 
     protected_connection = FakeConnection(MysqlDialect(), current_identity="admin@localhost")
     protected_engine = FakeEngine(protected_connection)
     monkeypatch.setattr(mysql_user, "create_engine", lambda _: protected_engine)
 
     with pytest.raises(DatabaseOperationError, match="current MySQL"):
-        mysql_user.revoke_profile(mysql_dsn(), "admin", "localhost", "app", "read-only")
+        mysql_user.revoke_profile(mysql_dsn(), "admin", "localhost", "app", "readonly")
 
     assert protected_connection.statements == ["SELECT CURRENT_USER()"]
 
@@ -212,7 +216,7 @@ def test_mysql_high_risk_cli_requires_yes_before_dsn_resolution(
             "--database",
             "app",
             "--profile",
-            "read-only",
+            "readonly",
         ],
     )
 
@@ -268,13 +272,13 @@ def test_postgresql_password_ddl_requires_a_driver_connection(
         postgres_role.create_role(postgresql_dsn(), "app_role", "POSTGRES_ROLE_PASSWORD")
 
 
-def test_postgresql_schema_read_write_profile_targets_existing_objects(
+def test_postgresql_schema_migrator_profile_targets_existing_objects(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     connection = FakeConnection(PostgreSQLDialect(), current_identity="admin")
     monkeypatch.setattr(postgres_role, "create_engine", lambda _: FakeEngine(connection))
 
-    postgres_role.grant_profile(postgresql_dsn(), "app_role", ("schema", "app"), "read-write")
+    postgres_role.grant_profile(postgresql_dsn(), "app_role", ("schema", "app"), "migrator")
 
     assert connection.statements == [
         "SELECT CURRENT_USER",
@@ -282,54 +286,69 @@ def test_postgresql_schema_read_write_profile_targets_existing_objects(
         "GRANT CREATE ON SCHEMA app TO app_role",
         "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA app TO app_role",
         "GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA app TO app_role",
+        "ALTER ROLE app_role CREATEDB",
+    ]
+
+
+def test_postgresql_schema_readwrite_profile_targets_existing_objects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = FakeConnection(PostgreSQLDialect(), current_identity="admin")
+    monkeypatch.setattr(postgres_role, "create_engine", lambda _: FakeEngine(connection))
+
+    postgres_role.grant_profile(postgresql_dsn(), "app_role", ("schema", "app"), "readwrite")
+
+    assert connection.statements == [
+        "SELECT CURRENT_USER",
+        "GRANT USAGE ON SCHEMA app TO app_role",
+        "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA app TO app_role",
+        "GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA app TO app_role",
     ]
 
 
 @pytest.mark.parametrize(
-    ("profile", "expected"),
+    ("profile", "expected", "expected_global"),
     [
-        ("read-only", "GRANT SELECT, SHOW VIEW ON app.* TO :user@:host"),
+        ("readonly", "GRANT SELECT, SHOW VIEW ON app.* TO :user@:host", None),
         (
-            "ddl",
-            "GRANT SELECT, SHOW VIEW, CREATE, ALTER, DROP, INDEX, CREATE VIEW, TRIGGER "
-            "ON app.* TO :user@:host",
+            "readwrite",
+            "GRANT SELECT, SHOW VIEW, INSERT, UPDATE, DELETE ON app.* TO :user@:host",
+            None,
         ),
         (
-            "read-write",
+            "migrator",
             "GRANT SELECT, SHOW VIEW, CREATE, ALTER, DROP, INDEX, CREATE VIEW, TRIGGER, "
             "INSERT, UPDATE, DELETE ON app.* TO :user@:host",
-        ),
-        (
-            "dml",
-            "GRANT SELECT, SHOW VIEW, CREATE, ALTER, DROP, INDEX, CREATE VIEW, TRIGGER, "
-            "INSERT, UPDATE, DELETE ON app.* TO :user@:host",
+            "GRANT CREATE ON *.* TO :user@:host",
         ),
     ],
 )
 def test_mysql_profiles_follow_hierarchy(
-    monkeypatch: pytest.MonkeyPatch, profile: str, expected: str
+    monkeypatch: pytest.MonkeyPatch, profile: str, expected: str, expected_global: str | None
 ) -> None:
     connection = FakeConnection(MysqlDialect(), current_identity="admin@localhost")
     monkeypatch.setattr(mysql_user, "create_engine", lambda _: FakeEngine(connection))
 
     mysql_user.grant_profile(mysql_dsn(), "app_user", "app.example", "app", profile)  # type: ignore[arg-type]
 
-    assert connection.statements[1] == expected
-    if profile == "dml":
-        assert connection.statements[2] == "GRANT CREATE ON *.* TO :user@:host"
+    expected_statements = ["SELECT CURRENT_USER()", expected]
+    if expected_global is not None:
+        expected_statements.append(expected_global)
+    assert connection.statements == expected_statements
 
 
-def test_postgresql_database_profile_and_current_role_protection(
+def test_postgresql_migrator_profile_and_current_role_protection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     connection = FakeConnection(PostgreSQLDialect(), current_identity="admin")
     monkeypatch.setattr(postgres_role, "create_engine", lambda _: FakeEngine(connection))
 
-    postgres_role.revoke_profile(postgresql_dsn(), "app_role", ("database", "app"), "read-write")
+    postgres_role.revoke_profile(postgresql_dsn(), "app_role", ("database", "app"), "migrator")
 
     assert connection.statements == [
         "SELECT CURRENT_USER",
-        "REVOKE CONNECT, CREATE, TEMPORARY ON DATABASE app FROM app_role",
+        "REVOKE CONNECT, CREATE ON DATABASE app FROM app_role",
+        "ALTER ROLE app_role NOCREATEDB",
     ]
 
     protected_connection = FakeConnection(PostgreSQLDialect(), current_identity="admin")
@@ -374,7 +393,7 @@ def test_grant_privilege_modes_are_mutually_exclusive(monkeypatch: pytest.Monkey
             "--host",
             "app.example",
             "--profile",
-            "read-only",
+            "readonly",
             "--privilege",
             "SELECT",
             "--yes",
@@ -525,7 +544,7 @@ def test_mysql_grant_and_revoke_cli_dispatch_profile_operations(
         "--database",
         "app",
         "--profile",
-        "read-only",
+        "readonly",
         "--yes",
     ]
 
@@ -534,8 +553,8 @@ def test_mysql_grant_and_revoke_cli_dispatch_profile_operations(
 
     assert granted.exit_code == 0, granted.output
     assert revoked.exit_code == 0, revoked.output
-    grant.assert_called_once_with(parsed, "app_user", "app.example", "app", "read-only")
-    revoke.assert_called_once_with(parsed, "app_user", "app.example", "app", "read-only")
+    grant.assert_called_once_with(parsed, "app_user", "app.example", "app", "readonly")
+    revoke.assert_called_once_with(parsed, "app_user", "app.example", "app", "readonly")
 
 
 def test_mysql_direct_lifecycle_operations_and_validation_branches(
@@ -549,7 +568,7 @@ def test_mysql_direct_lifecycle_operations_and_validation_branches(
     mysql_user.disable_user(mysql_dsn(), "app_user", "localhost")
     mysql_user.rotate_user_password(mysql_dsn(), "app_user", "app.example", "MYSQL_USER_PASSWORD")
     mysql_user.drop_user(mysql_dsn(), "app_user", "app.example")
-    mysql_user.revoke_profile(mysql_dsn(), "app_user", "app.example", "app", "read-only")
+    mysql_user.revoke_profile(mysql_dsn(), "app_user", "app.example", "app", "readonly")
 
     assert "ALTER USER :user@:host ACCOUNT UNLOCK" in connection.statements
     assert "ALTER USER :user@:host ACCOUNT LOCK" in connection.statements
@@ -567,7 +586,7 @@ def test_mysql_direct_lifecycle_operations_and_validation_branches(
             "app_user",
             "localhost",
             None,
-            "read-only",
+            "readonly",
         )
     with pytest.raises(DatabaseOperationError, match="profile"):
         mysql_user._profile("admin")
@@ -649,7 +668,7 @@ def test_postgresql_grant_and_revoke_cli_dispatch_profile_operations(
         "--schema",
         "app",
         "--profile",
-        "read-only",
+        "readonly",
         "--yes",
     ]
 
@@ -658,8 +677,8 @@ def test_postgresql_grant_and_revoke_cli_dispatch_profile_operations(
 
     assert granted.exit_code == 0, granted.output
     assert revoked.exit_code == 0, revoked.output
-    grant.assert_called_once_with(parsed, "app_role", ("schema", "app"), "read-only")
-    revoke.assert_called_once_with(parsed, "app_role", ("schema", "app"), "read-only")
+    grant.assert_called_once_with(parsed, "app_role", ("schema", "app"), "readonly")
+    revoke.assert_called_once_with(parsed, "app_role", ("schema", "app"), "readonly")
 
 
 def test_postgresql_direct_lifecycle_operations_and_validation_branches(
@@ -673,7 +692,7 @@ def test_postgresql_direct_lifecycle_operations_and_validation_branches(
     postgres_role.disable_role(postgresql_dsn(), "app_role")
     postgres_role.rotate_role_password(postgresql_dsn(), "app_role", "POSTGRES_ROLE_PASSWORD")
     postgres_role.drop_role(postgresql_dsn(), "app_role")
-    postgres_role.revoke_profile(postgresql_dsn(), "app_role", ("schema", "app"), "read-only")
+    postgres_role.revoke_profile(postgresql_dsn(), "app_role", ("schema", "app"), "readonly")
 
     assert "ALTER ROLE app_role LOGIN" in connection.statements
     assert "ALTER ROLE app_role NOLOGIN" in connection.statements
@@ -688,7 +707,7 @@ def test_postgresql_direct_lifecycle_operations_and_validation_branches(
     with pytest.raises(DatabaseOperationError, match="profile"):
         postgres_role._profile("owner")
     with pytest.raises(DatabaseOperationError, match="resource"):
-        postgres_role._profile_statements("table", "app", "app_role", "read-only", "GRANT")
+        postgres_role._profile_statements("table", "app", "app_role", "readonly", "GRANT")
 
 
 def test_postgresql_errors_are_redacted_and_role_dsn_is_dialect_specific(

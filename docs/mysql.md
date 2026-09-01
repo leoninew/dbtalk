@@ -106,7 +106,7 @@ export APP_PASSWORD='application-password'
 uv run dbtalk mysql user create --dsn-env MYSQL_ADMIN_DSN \
   --user app_user --host app.example --password-env APP_PASSWORD
 uv run dbtalk mysql grant --dsn-env MYSQL_ADMIN_DSN \
-  --user app_user --host app.example --database app --profile read-write --yes
+  --user app_user --host app.example --database app --profile readwrite --yes
 
 uv run dbtalk mysql grant --dsn-env MYSQL_ADMIN_DSN \
   --user app_user --host app.example --privilege SELECT \
@@ -115,7 +115,7 @@ uv run dbtalk mysql grant --dsn-env MYSQL_ADMIN_DSN \
 
 MySQL user 必须显式提供一个精确 host：`localhost`、单个 DNS 名称、IPv4 或 IPv6。`%`、`_` 和其他通配 host 均被拒绝。密码只能通过 `--password-env` 引用的环境变量输入；不会显示在命令输出、日志或错误中。
 
-授权目标 database 可省略，省略时使用 DSN database。profile 按 `dml > read-write > ddl > read-only` 包含：`read-only` 授予 `SELECT, SHOW VIEW`，`ddl` 增加建表/改表等 DDL，`read-write` 再增加 `INSERT, UPDATE, DELETE`，`dml` 再增加建库所需权限。也可重复指定 `--privilege NAME` 使用数据库服务端支持的细粒度权限；它与 `--profile` 互斥。
+授权目标 database 可省略，省略时使用 DSN database。profile 按 `migrator > readwrite > readonly` 包含：`readonly` 授予 `SELECT, SHOW VIEW`；`readwrite` 再授予 `INSERT, UPDATE, DELETE`；`migrator` 再授予目标 database 上的 DDL，以及创建 database 所需的全局 `CREATE ON *.*`。MySQL 无法将建库的 `CREATE` 与对象 `CREATE` 分离为两种权限，因此 `migrator` 的建库能力是实例级能力；只应授予受控迁移账号。固定 profile 不包含 `GRANT`、`REVOKE`、`GRANT OPTION` 或其他权限管理能力。也可重复指定 `--privilege NAME` 使用数据库服务端支持的细粒度权限；它与 `--profile` 互斥。
 
 ```bash
 uv run dbtalk mysql permissions list --dsn-env MYSQL_ADMIN_DSN

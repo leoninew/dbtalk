@@ -1,9 +1,15 @@
 # 用户管理
-最后修改时间: 2026-08-23 14:28:15
+最后修改时间: 2026-09-01 22:41:50
 
 Review status: Accepted
 Flow mode: standard
 Stage: Requirement
+
+## 后续设计说明
+
+本记录保留 2026-08-23 首版用户管理需求的事实与验收边界。授权 profile 已由后续的 [授权与权限管理需求](20260901-authorization-grant-revoke.md) 取代，不应将本记录中的双 profile 设计视为当前接口。
+
+当前固定 profile 为 `readonly`、`readwrite`、`migrator`：前两者分别用于查询和常规应用读写；`migrator` 包含 DDL、DML 与建库能力，不添加 `GRANT OPTION` 或角色管理能力。建库在 MySQL 映射为全局 `CREATE ON *.*`，在 PostgreSQL 映射为 role 的全局 `CREATEDB` 属性。
 
 ## Background
 
@@ -78,7 +84,7 @@ Stage: Requirement
 - 账号生命周期与数据库生命周期保持独立 Requirement；常规授权与撤销纳入首版，但不得成为创建主体的隐式副作用。
 - 授权与撤销作为 `dbtalk mysql`、`dbtalk postgres` 下与 account/role 生命周期同级的命令，不增加通用 `dbtalk admin` 根命令。
 - 首版授权资源范围为 MySQL 单个数据库，以及 PostgreSQL database 或 schema；table、sequence 和 function 目标不在首版范围内。
-- 首版授权模型固定为 `read-only` 与 `read-write` profile；具体方言权限映射由 Spec 定义并受测试保护。
+- 首版授权模型固定为 `read-only` 与 `read-write` profile；该历史设计已由后续的 `readonly`、`readwrite`、`migrator` 模型取代。
 - MySQL 公开 CLI 使用 `user`，PostgreSQL 使用 `role`；两端均使用同级的 `grant` 与 `revoke`。
 - MySQL 首版仅接受单个精确 host，不接受 `%`、`_` 或其他通配 host，避免在创建时扩大连接来源。
 - 列表仅输出固定的账号定位与登录能力字段，不输出密码哈希、认证插件或凭据关联信息。
