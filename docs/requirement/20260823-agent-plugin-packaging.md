@@ -7,20 +7,16 @@ Stage: Requirement
 
 ## Background
 
-`dbtalk` 需要作为独立 plugin 供 Codex、Claude 与 Grok 使用，并让三个宿主共享同一份数据库操作 skill。skill
-不能依赖仓库开发态的 `uv run dbtalk`，而应调用发布安装且位于 `PATH` 的 CLI。
+`dbtalk` 需要作为独立 plugin 供 Codex、Claude 与 Grok 使用，并让三个宿主共享同一份数据库操作 skill。skill 不能依赖仓库开发态的 `uv run dbtalk`，而应调用发布安装且位于 `PATH` 的 CLI。
 
-本地发布还需要安装 CLI，并调用各宿主的原生 plugin 管理器管理仓库中的 marketplace。发布器原有的宿主适配逻辑
-先写入再发现宿主是否可用，并通过文本包含判断状态，无法可靠区分同名前缀的 marketplace 或 plugin。
+本地发布还需要安装 CLI，并调用各宿主的原生 plugin 管理器管理仓库中的 marketplace。发布器原有的宿主适配逻辑先写入再发现宿主是否可用，并通过文本包含判断状态，无法可靠区分同名前缀的 marketplace 或 plugin。
 
 ## Goal
 
 1. 使用一份共享的 `plugins/dbtalk/skills/` 发布 MySQL、PostgreSQL 与通用数据库工作流，避免宿主间说明漂移。
-2. 提供 Codex、Claude 所需的 manifest 与 marketplace，并让 Grok 使用已验证的 Claude-compatible manifest 和
-   `.agents` marketplace 发现同一 plugin。
+2. 提供 Codex、Claude 所需的 manifest 与 marketplace，并让 Grok 使用已验证的 Claude-compatible manifest 和 `.agents` marketplace 发现同一 plugin。
 3. 令 plugin skill 调用发布安装且位于 `PATH` 的 `dbtalk` CLI；仓库开发说明仍可单独使用 `uv run dbtalk`。
-4. 通过 `make install` 依次执行 plugin 预检、CLI 安装与 plugin 应用，使用单一 `scripts/install.py plugin`
-   子命令同步 Claude、Codex 与 Grok 的原生 plugin 生命周期。
+4. 通过 `make install` 依次执行 plugin 预检、CLI 安装与 plugin 应用，使用单一 `scripts/install.py plugin` 子命令同步 Claude、Codex 与 Grok 的原生 plugin 生命周期。
 5. 在首次写入前完成来源、宿主选择与状态预检；自动模式跳过缺失的部分宿主，全部缺失时失败且不写入用户目录。
 6. 支持指定宿主、`--strict` 与 `--dry-run`，使用宿主 CLI 的 JSON 状态精确匹配并在写入后验证结果。
 
@@ -41,8 +37,7 @@ Stage: Requirement
 ## Acceptance
 
 - [ ] `plugins/dbtalk` 同时包含有效的 Codex 与 Claude plugin manifest，并共享同一 `skills/` 目录。
-- [ ] Codex/Grok 的 `.agents/plugins/marketplace.json` 与 Claude 的 `.claude-plugin/marketplace.json` 都指向
-      `./plugins/dbtalk`。
+- [ ] Codex/Grok 的 `.agents/plugins/marketplace.json` 与 Claude 的 `.claude-plugin/marketplace.json` 都指向 `./plugins/dbtalk`。
 - [ ] Grok 可验证该插件目录，且 Claude 可严格验证 manifest、marketplace 与完整插件目录。
 - [ ] 三个 plugin skill 不包含 `uv run dbtalk`，并明确 `dbtalk` 必须位于 `PATH`。
 - [ ] 原有方言隔离与高危操作 `--yes` 安全指引保持不变。
@@ -60,13 +55,10 @@ Stage: Requirement
 ## Decisions
 
 - 采用一份共享 skill 载荷，由各宿主 manifest 和 marketplace 发现；不为每个宿主复制 skills。
-- Claude 使用 `.claude-plugin/plugin.json` 及仓库根目录 `.claude-plugin/marketplace.json`；Grok 使用已验证的
-  Claude manifest 兼容性与 `.agents/plugins/marketplace.json`。
+- Claude 使用 `.claude-plugin/plugin.json` 及仓库根目录 `.claude-plugin/marketplace.json`；Grok 使用已验证的 Claude manifest 兼容性与 `.agents/plugins/marketplace.json`。
 - plugin skill 只记录发布态 `dbtalk` 调用；开发态 `uv run dbtalk` 保留在项目与插件说明中，而不写入 skill。
-- 以规范源提供的完整 `scripts/install.py` 引擎替换旧发布适配器；项目内 vendored 副本只修改顶部项目配置区，
-  不读取私有 JSON、不依赖共享 Python 包，也不创建 `install_config.py` 或其他同步器。
-- `Makefile` 的 `install` 目标严格依次执行 plugin 预检、`uv tool install --editable . --force`、plugin 应用；`install.py` 只提供
-  显式的 plugin 子命令、预检与宿主同步，直接使用仓库 marketplace。marketplace 名称保持 `dbtalk-local`。
+- 以规范源提供的完整 `scripts/install.py` 引擎替换旧发布适配器；项目内 vendored 副本只修改顶部项目配置区，不读取私有 JSON、不依赖共享 Python 包，也不创建 `install_config.py` 或其他同步器。
+- `Makefile` 的 `install` 目标严格依次执行 plugin 预检、`uv tool install --editable . --force`、plugin 应用；`install.py` 只提供显式的 plugin 子命令、预检与宿主同步，直接使用仓库 marketplace。marketplace 名称保持 `dbtalk-local`。
 
 ## Risk
 

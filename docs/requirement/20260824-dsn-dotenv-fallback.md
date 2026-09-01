@@ -7,8 +7,7 @@ Stage: Requirement
 
 ## Background
 
-`--dsn-env` 当前只从进程环境读取 DSN。项目已经忽略当前目录 `.env`，但该文件不能作为
-`DBTALK_*` DSN 名称的本地安全凭据来源，导致自动化代理无法在不暴露命令行密码的前提下完成连接配置。
+`--dsn-env` 当前只从进程环境读取 DSN。项目已经忽略当前目录 `.env`，但该文件不能作为 `DBTALK_*` DSN 名称的本地安全凭据来源，导致自动化代理无法在不暴露命令行密码的前提下完成连接配置。
 
 ## Goal
 
@@ -24,11 +23,9 @@ Stage: Requirement
 
 ## User scenarios
 
-1. 用户运行 `--dsn-env DBTALK_APP_DSN`，进程未设置该变量，工具从当前目录 `.env` 的
-   `DBTALK_APP_DSN=...` 读取 DSN。
+1. 用户运行 `--dsn-env DBTALK_APP_DSN`，进程未设置该变量，工具从当前目录 `.env` 的 `DBTALK_APP_DSN=...` 读取 DSN。
 2. CI 或调用进程已设置 `DBTALK_APP_DSN`，即使当前目录 `.env` 有不同值，仍使用进程中的值。
-3. 代理在用户提供已授权 DSN 后可将其写入当前目录、已忽略的 `.env`，再使用 `--dsn-env`，但不得将
-   DSN 作为 CLI 参数、输出或提交内容。
+3. 代理在用户提供已授权 DSN 后可将其写入当前目录、已忽略的 `.env`，再使用 `--dsn-env`，但不得将 DSN 作为 CLI 参数、输出或提交内容。
 
 ## Acceptance
 

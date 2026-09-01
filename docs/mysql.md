@@ -2,7 +2,7 @@
 
 `dbtalk mysql` 用于管理 MySQL 数据库，以及创建和还原原生 SQL dump。每个子命令都必须接受且只接受一个 `--dsn DSN` 或 `--dsn-env NAME`。
 
-```powershell
+```bash
 uv run dbtalk mysql --help
 uv run dbtalk mysql schema --help
 uv run dbtalk mysql dump --help
@@ -24,15 +24,15 @@ uv run dbtalk mysql permissions --help
 
 MySQL backup/restore 只接受明确的 `mysql+pymysql://` DSN：
 
-```powershell
-uv run dbtalk mysql dump `
-  --dsn 'mysql+pymysql://user:password@host:3306/app' `
-  --output .\data\app.sql
+```bash
+uv run dbtalk mysql dump \
+  --dsn 'mysql+pymysql://user:password@host:3306/app' \
+  --output ./data/app.sql
 
-$env:APP_DSN = 'mysql+pymysql://user:password@host:3306/app'
-uv run dbtalk mysql restore `
-  --dsn-env APP_DSN `
-  --input .\data\app.sql.gz
+export APP_DSN='mysql+pymysql://user:password@host:3306/app'
+uv run dbtalk mysql restore \
+  --dsn-env APP_DSN \
+  --input ./data/app.sql.gz
 ```
 
 `mysql://`、`postgresql://`、`postgres://`、Go 风格 DSN 和 host/user/password/database 分散参数都不是 canonical DSN。完整 DSN 可能包含密码；脚本中优先使用 `--dsn-env`。密码只通过 `MYSQL_PWD` 传递给原生客户端，正常输出不会回显密码。
@@ -41,8 +41,8 @@ uv run dbtalk mysql restore `
 
 `schema` 子命令管理 MySQL schema/database 本身，不执行任意 SQL、不管理账号，也不替代 dump/restore。DSN 必须指向实例中一个已存在且可连接的管理库，所用账号需要相应的 MySQL 数据库管理权限。
 
-```powershell
-$env:MYSQL_MANAGEMENT_DSN = 'mysql+pymysql://operator:password@db.example.com:3306/mysql'
+```bash
+export MYSQL_MANAGEMENT_DSN='mysql+pymysql://operator:password@db.example.com:3306/mysql'
 
 uv run dbtalk mysql schema list --dsn-env MYSQL_MANAGEMENT_DSN
 uv run dbtalk mysql schema create --dsn-env MYSQL_MANAGEMENT_DSN --name app_db
@@ -53,11 +53,11 @@ uv run dbtalk mysql schema drop --dsn-env MYSQL_MANAGEMENT_DSN --name app_db --y
 
 ## Dump
 
-```powershell
-uv run dbtalk mysql dump `
-  --dsn 'mysql+pymysql://user:password@host:3306/app' `
-  --output .\data\app.sql `
-  --skip-definer `
+```bash
+uv run dbtalk mysql dump \
+  --dsn 'mysql+pymysql://user:password@host:3306/app' \
+  --output ./data/app.sql \
+  --skip-definer \
   --archive
 ```
 
@@ -74,11 +74,11 @@ dump 固定使用 `-B` 保留顶层 `USE`，并始终传递 `--no-create-db`，�
 
 ## Restore
 
-```powershell
-uv run dbtalk mysql restore `
-  --dsn 'mysql+pymysql://operator:password@host:3306/maintenance' `
-  --database app `
-  --input .\data\app.sql.gz
+```bash
+uv run dbtalk mysql restore \
+  --dsn 'mysql+pymysql://operator:password@host:3306/maintenance' \
+  --database app \
+  --input ./data/app.sql.gz
 ```
 
 | 选项 | 说明 |
@@ -99,17 +99,17 @@ dump 和 restore 会在 stderr 输出 `started`、`progress`、`completed` 和 `
 
 `dbtalk mysql user` 管理 MySQL `username@host` account；`dbtalk mysql grant` 和 `revoke` 与 user 命令同级。所有管理命令使用管理 DSN，且必须在 `--dsn` 和 `--dsn-env` 间二选一。
 
-```powershell
-$env:MYSQL_ADMIN_DSN = 'mysql+pymysql://admin:password@db.example:3306/app'
-$env:APP_PASSWORD = 'application-password'
+```bash
+export MYSQL_ADMIN_DSN='mysql+pymysql://admin:password@db.example:3306/app'
+export APP_PASSWORD='application-password'
 
-uv run dbtalk mysql user create --dsn-env MYSQL_ADMIN_DSN `
+uv run dbtalk mysql user create --dsn-env MYSQL_ADMIN_DSN \
   --user app_user --host app.example --password-env APP_PASSWORD
-uv run dbtalk mysql grant --dsn-env MYSQL_ADMIN_DSN `
+uv run dbtalk mysql grant --dsn-env MYSQL_ADMIN_DSN \
   --user app_user --host app.example --database app --profile read-write --yes
 
-uv run dbtalk mysql grant --dsn-env MYSQL_ADMIN_DSN `
-  --user app_user --host app.example --privilege SELECT `
+uv run dbtalk mysql grant --dsn-env MYSQL_ADMIN_DSN \
+  --user app_user --host app.example --privilege SELECT \
   --privilege UPDATE --yes
 ```
 
@@ -117,12 +117,11 @@ MySQL user 必须显式提供一个精确 host：`localhost`、单个 DNS 名称
 
 授权目标 database 可省略，省略时使用 DSN database。profile 按 `dml > read-write > ddl > read-only` 包含：`read-only` 授予 `SELECT, SHOW VIEW`，`ddl` 增加建表/改表等 DDL，`read-write` 再增加 `INSERT, UPDATE, DELETE`，`dml` 再增加建库所需权限。也可重复指定 `--privilege NAME` 使用数据库服务端支持的细粒度权限；它与 `--profile` 互斥。
 
-```powershell
+```bash
 uv run dbtalk mysql permissions list --dsn-env MYSQL_ADMIN_DSN
 uv run dbtalk mysql permissions show --dsn-env MYSQL_ADMIN_DSN --user app_user --host app.example
 ```
 
-`permissions list` 默认展示当前 DSN 可见的原生权限，可按账号和 database 筛选；`show` 查看一个精确的
-`user@host`。输出直接来自 MySQL 原生权限查询。不支持 `WITH GRANT OPTION`、代理身份或超级用户管理。
+`permissions list` 默认展示当前 DSN 可见的原生权限，可按账号和 database 筛选；`show` 查看一个精确的 `user@host`。输出直接来自 MySQL 原生权限查询。不支持 `WITH GRANT OPTION`、代理身份或超级用户管理。
 
 启用、禁用、轮换密码、删除、授权和撤销都要求 `--yes`，并拒绝修改当前管理 account。创建和授权不会隐式赋予其他权限；撤销 profile 可能中断使用该 account 的应用连接。

@@ -7,6 +7,7 @@ name = "dbtalk"
 version = "0.17.0"
 description = "MySQL and PostgreSQL backup/restore plus JSONL database transfer CLI."
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.12"
 dependencies = [
   "SQLAlchemy>=2.0,<3",

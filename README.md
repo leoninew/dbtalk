@@ -2,30 +2,31 @@
 
 [![CI](https://github.com/leoninew/pomelo-dbtalk/actions/workflows/ci.yml/badge.svg)](https://github.com/leoninew/pomelo-dbtalk/actions/workflows/ci.yml)
 
-`dbtalk` 是一个面向自动化和运维场景的数据库命令行工具，统一处理 SQL 操作、数据迁移、权限管理和逻辑备份。
+`dbtalk` is an LLM-ready database CLI for SQL operations, JSONL data transfer, permissions, and logical backups across SQLite, MySQL, and PostgreSQL.
 
-支持 SQLite、MySQL 和 PostgreSQL，并使用明确的 SQLAlchemy 风格 DSN 作为连接入口。
+[中文文档](README.zh-CN.md)
 
-## 功能
+## Features
 
-- 使用 `query` 和 `exec` 执行 SQL，支持参数绑定和超时控制
-- 在 SQLite、MySQL、PostgreSQL 之间导出和导入 JSONL 数据
-- 管理 MySQL schema、user 和 PostgreSQL schema、role
-- 使用 `grant`、`revoke` 管理权限 profile，使用 `permissions list/show` 查看原生权限
-- 创建和恢复 MySQL SQL dump、PostgreSQL custom archive
+- Run SQL with `query` and `exec`, including bound parameters and timeouts
+- Transfer JSONL data between SQLite, MySQL, and PostgreSQL
+- Manage MySQL schemas and users, and PostgreSQL schemas and roles
+- Grant and revoke permission profiles; inspect native permissions with `permissions list/show`
+- Create and restore MySQL SQL dumps and PostgreSQL custom archives
+- Provide database-focused skills for Codex, Claude, and Grok agents
 
-## 安装
+## Installation
 
-需要 Python 3.12 或更高版本，以及 [uv](https://docs.astral.sh/uv/)。从源码安装并运行：
+Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync --all-groups
 uv run dbtalk --help
 ```
 
-## 快速开始
+## Quick start
 
-连接信息建议通过环境变量传入，避免密码出现在命令历史中：
+Keep connection strings in environment variables so passwords do not enter shell history:
 
 ```bash
 mkdir -p data
@@ -41,28 +42,30 @@ uv run dbtalk exec \
   --sql 'CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)'
 ```
 
-Windows PowerShell 使用 `$env:APP_DSN = '...'` 设置环境变量。
+For Bash, set the variable with `export APP_DSN='...'`.
 
-## 命令
+## Commands
 
-| 命令 | 用途 |
+| Command | Purpose |
 | --- | --- |
-| `dbtalk mysql schema` | 管理 MySQL schema/database |
-| `dbtalk mysql user` | 管理 MySQL 用户 |
-| `dbtalk mysql grant` / `dbtalk mysql revoke` | 授予或撤销 MySQL 权限 |
-| `dbtalk postgres schema` | 管理 PostgreSQL schema/database |
-| `dbtalk postgres role` | 管理 PostgreSQL role |
-| `dbtalk postgres grant` / `dbtalk postgres revoke` | 授予或撤销 PostgreSQL 权限 |
-| `dbtalk mysql permissions list/show` | 查看 MySQL 原生权限 |
-| `dbtalk postgres permissions list/show` | 查看 PostgreSQL 原生权限 |
-| `dbtalk mysql dump/restore` | 处理 MySQL SQL dump |
-| `dbtalk postgres dump/restore` | 处理 PostgreSQL custom archive |
-| `dbtalk query/exec` | 查询或执行单条 SQL |
-| `dbtalk export/import` | 传输 JSONL 数据 |
+| `dbtalk mysql schema` | Manage MySQL schemas/databases |
+| `dbtalk mysql user` | Manage MySQL users |
+| `dbtalk mysql grant` / `dbtalk mysql revoke` | Grant or revoke MySQL permissions |
+| `dbtalk postgres schema` | Manage PostgreSQL schemas/databases |
+| `dbtalk postgres role` | Manage PostgreSQL roles |
+| `dbtalk postgres grant` / `dbtalk postgres revoke` | Grant or revoke PostgreSQL permissions |
+| `dbtalk mysql permissions list/show` | Inspect native MySQL permissions |
+| `dbtalk postgres permissions list/show` | Inspect native PostgreSQL permissions |
+| `dbtalk mysql dump/restore` | Create or restore MySQL SQL dumps |
+| `dbtalk postgres dump/restore` | Create or restore PostgreSQL custom archives |
+| `dbtalk query/exec` | Query or execute one SQL statement |
+| `dbtalk export/import` | Transfer JSONL data |
 
-## DSN 和配置
+Run `uv run dbtalk --help` or a subcommand's `--help` for full options.
 
-支持的 DSN 示例：
+## DSNs and configuration
+
+Supported DSN examples:
 
 ```text
 sqlite:///./data/app.db
@@ -70,16 +73,31 @@ mysql+pymysql://user:password@host:3306/app
 postgresql+psycopg://user:password@host:5432/app
 ```
 
-命令必须在 `--dsn DSN` 和 `--dsn-env NAME` 中选择一个。默认配置位于 [dbtalk.yaml](dbtalk.yaml)，可使用 `DBTALK_` 前缀的环境变量覆盖。
+Every command accepts exactly one of `--dsn DSN` or `--dsn-env NAME`. Defaults are in [dbtalk.yaml](dbtalk.yaml) and can be overridden with `DBTALK_` environment variables.
 
-## 文档
+## Documentation
 
-- [数据库操作](docs/database.md)：SQL、JSONL 导入导出和 DSN 约定
-- [MySQL 手册](docs/mysql.md)：schema、用户、权限、dump 和 restore
-- [PostgreSQL 手册](docs/postgres.md)：schema、role、权限、dump 和 restore
-- [Codex 插件](docs/codex.md)：在 Codex 中使用仓库内插件
+- [Database operations](docs/database.md): SQL, JSONL transfer, and DSN conventions
+- [MySQL guide](docs/mysql.md): schemas, users, permissions, dump, and restore
+- [PostgreSQL guide](docs/postgres.md): schemas, roles, permissions, dump, and restore
 
-## 开发
+## Agent integration
+
+The repository ships a `dbtalk` plugin for Codex, Claude, and Grok with three skills:
+
+- `dbtalk-database`: SQL and JSONL data transfer
+- `dbtalk-mysql`: MySQL schemas, users, permissions, and dump/restore
+- `dbtalk-postgres`: PostgreSQL schemas, roles, permissions, and dump/restore
+
+Install or synchronize the local plugin with:
+
+```bash
+make install
+```
+
+See [Agent plugin and skills](docs/codex.md) for installation details, parameter constraints, and safety boundaries.
+
+## Development
 
 ```bash
 make deps
@@ -88,7 +106,11 @@ make test
 make release
 ```
 
-`make check` 执行 Ruff 和 Mypy；`make test` 运行测试套件。依赖真实数据库的集成测试默认跳过。
+`make check` runs Ruff and Mypy. `make test` runs the test suite; integration tests requiring a real database are skipped by default.
+
+## License
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
 
 ## Docker
 

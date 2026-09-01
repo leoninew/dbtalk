@@ -7,8 +7,7 @@ Stage: Verification
 
 ## Requirement alignment
 
-- 已实现 `read-only`、`ddl`、`read-write`、`dml` 四个固定 profile，权限包含关系为
-  `dml > read-write > ddl > read-only`。
+- 已实现 `read-only`、`ddl`、`read-write`、`dml` 四个固定 profile，权限包含关系为 `dml > read-write > ddl > read-only`。
 - `grant` / `revoke` 同时支持 profile 与可重复的 `--privilege`；两种模式互斥，细粒度权限交由数据库服务端校验。
 - 授权和撤销要求明确 DSN、主体和 `--yes`；资源省略时使用 DSN database。
 - MySQL 与 PostgreSQL 均提供 `permissions list/show`，支持主体及 database/schema 筛选并展示原生权限结果。
@@ -16,8 +15,7 @@ Stage: Verification
 
 ## Plan alignment
 
-计划中的权限模型、权限查询、schema 命令迁移、根命令扁平化、测试和文档步骤均已完成。实现保留了
-`src/dbtalk/database/` 作为内部实现包，但没有对外注册根级 `database` 命令，符合计划约束。
+计划中的权限模型、权限查询、schema 命令迁移、根命令扁平化、测试和文档步骤均已完成。实现保留了 `src/dbtalk/database/` 作为内部实现包，但没有对外注册根级 `database` 命令，符合计划约束。
 
 ## Actual diff summary
 
@@ -31,8 +29,7 @@ Stage: Verification
 
 ## Expected vs actual files
 
-计划文件范围内的源代码、测试、文档和 Skill 均已覆盖。实际额外变更仅为修复同一质量门禁中发现的既有
-`tests/test_backup_databases.py` 格式/类型问题；未修改其业务行为或测试断言语义。
+计划文件范围内的源代码、测试、文档和 Skill 均已覆盖。实际额外变更仅为修复同一质量门禁中发现的既有 `tests/test_backup_databases.py` 格式/类型问题；未修改其业务行为或测试断言语义。
 
 ## Acceptance checklist
 
@@ -69,5 +66,3 @@ Stage: Verification
 ## Conclusion
 
 实现与已接受的 requirement、plan 对齐，验收标准全部满足；质量检查、单元测试、命令面检查和本地权限集成检查均通过。当前没有未完成的实现项。
-
-

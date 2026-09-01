@@ -37,23 +37,23 @@ Stage: Requirement
 
 1. 管理员为 PostgreSQL role 授予 schema 级只读 profile：
 
-   ```powershell
-   dbtalk postgres grant `
-     --dsn-env POSTGRES_ADMIN_DSN `
-     --role app_role `
-     --schema app `
-     --profile read-only `
+   ```bash
+   dbtalk postgres grant \
+     --dsn-env POSTGRES_ADMIN_DSN \
+     --role app_role \
+     --schema app \
+     --profile read-only \
      --yes
    ```
 
 2. 管理员为 PostgreSQL role 授予 schema `CREATE`，不执行通用 SQL：
 
-   ```powershell
-   dbtalk postgres grant `
-     --dsn-env POSTGRES_ADMIN_DSN `
-     --role app_role `
-     --schema app `
-     --privilege create `
+   ```bash
+   dbtalk postgres grant \
+     --dsn-env POSTGRES_ADMIN_DSN \
+     --role app_role \
+     --schema app \
+     --privilege create \
      --yes
    ```
 

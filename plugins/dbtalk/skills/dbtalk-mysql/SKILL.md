@@ -17,7 +17,7 @@ DSN 的 host 从当前执行机解释。`localhost` 或 `127.0.0.1` 指向当前
 
 ## 配置与凭据
 
-从项目根目录的 `dbtalk.yaml` 读取默认配置。设置 `DBTALK_ENVKEY=local` 时，`.env.local` 中的 `DBTALK_*` 值覆盖 YAML。数据库连接必须通过完整的 `--dsn DSN` 或 `--dsn-env NAME` 二选一提供，不再使用 host、port、user、password、 database 分散参数。支持的 MySQL DSN 是 `mysql+pymysql://user:password@host:3306/database`。将含凭据的 DSN 保存到环境变量，或在用户已提供或明确授权该 DSN 时写入当前目录、Git 已忽略的 `.env` 中的 `DBTALK_*` 条目。`--dsn-env DBTALK_*` 优先使用同名进程环境变量；变量不存在时才读取当前目录 `.env`。不得猜测凭据，也不要将 DSN 写入命令行、日志、文档、`.env.example` 或提交记录：
+从项目根目录的 `dbtalk.yaml` 读取默认配置。设置 `DBTALK_ENVKEY=local` 时，`.env.local` 中的 `DBTALK_*` 值覆盖 YAML。数据库连接必须通过完整的 `--dsn DSN` 或 `--dsn-env NAME` 二选一提供，不再使用 host、port、user、password、database 分散参数。支持的 MySQL DSN 是 `mysql+pymysql://user:password@host:3306/database`。将含凭据的 DSN 保存到环境变量，或在用户已提供或明确授权该 DSN 时写入当前目录、Git 已忽略的 `.env` 中的 `DBTALK_*` 条目。`--dsn-env DBTALK_*` 优先使用同名进程环境变量；变量不存在时才读取当前目录 `.env`。不得猜测凭据，也不要将 DSN 写入命令行、日志、文档、`.env.example` 或提交记录：
 
 ```env
 DBTALK_APP_DSN=mysql+pymysql://user:password@host:3306/database
@@ -27,7 +27,7 @@ DBTALK_APP_DSN=mysql+pymysql://user:password@host:3306/database
 
 数据库生命周期操作使用 `dbtalk mysql schema`，与 query/exec、账号管理和 dump/restore 分离。管理 DSN 必须指向一个已有 MySQL 数据库，并使用具有相应数据库管理权限的账号。
 
-```powershell
+```bash
 dbtalk mysql schema list --dsn-env DBTALK_MYSQL_MANAGEMENT_DSN
 dbtalk mysql schema create --dsn-env DBTALK_MYSQL_MANAGEMENT_DSN --name app_db
 dbtalk mysql schema drop --dsn-env DBTALK_MYSQL_MANAGEMENT_DSN --name app_db --yes
@@ -41,9 +41,9 @@ dump 需要完整的 MySQL DSN。未传 `--output` 时，输出默认为当前�
 
 `dump` 是 MySQL 原生 SQL 备份入口；不要用 `dbtalk export` 代替它。只有用户同时要求 JSONL 数据导出时，才额外运行 `dbtalk export`。
 
-```powershell
-dbtalk mysql dump --dsn-env DBTALK_APP_DSN --output .\data\app.sql
-dbtalk mysql dump --dsn-env DBTALK_APP_DSN --output .\data\app.sql --archive
+```bash
+dbtalk mysql dump --dsn-env DBTALK_APP_DSN --output ./data/app.sql
+dbtalk mysql dump --dsn-env DBTALK_APP_DSN --output ./data/app.sql --archive
 ```
 
 `--archive` 写入 `.sql.gz`；输出路径没有 `.gz` 后缀时会自动追加。dump 固定保留顶层 `USE` 并传递 `--no-create-db`，不会生成 `CREATE DATABASE` 或 `DROP DATABASE`。`--skip-definer` 是显式可选项，只向原生 `mysqldump` 传递该参数；默认保留 `DEFINER`，客户端不支持时直接失败。非本机 MySQL host 使用连接压缩；`localhost` 与 `127.0.0.1` 不使用该参数。
@@ -54,13 +54,13 @@ dump 先写同目录临时文件，成功且非空后才发布；客户端、复
 
 restore 需要已有的 `.sql` 或 `.sql.gz` 文件，以及完整的 MySQL DSN。目标库必须已存在；restore 不会创建或删除数据库。
 
-```powershell
-dbtalk mysql restore --dsn-env DBTALK_APP_DSN --database app --input .\data\app-20260820-120000.sql.gz
+```bash
+dbtalk mysql restore --dsn-env DBTALK_APP_DSN --database app --input ./data/app-20260820-120000.sql.gz
 ```
 
 `--database TARGET` 优先于 `mysqlrestore.database` 和 DSN database。DSN 仍必须包含 database，用于连接维护库；目标库由 restore 前的只读探测确认存在。输入中的 `CREATE DATABASE` 或 `DROP DATABASE` 会在导入客户端启动前被拒绝，不能依靠 restore 执行数据库生命周期操作。存在的顶层 `USE` 只在临时输入中重写为目标库，原始 dump 文件不会修改。
 
-restore 会覆盖或删除 dump 中同名表及数据，不能整体回滚。完成后确认命令成功退出，并按需检查目标表数或代表性数据。 dump/restore 的 stderr 生命周期日志包含阶段、`elapsed_ms` 和字节数；stdout 只输出最终路径或结果摘要。
+restore 会覆盖或删除 dump 中同名表及数据，不能整体回滚。完成后确认命令成功退出，并按需检查目标表数或代表性数据。dump/restore 的 stderr 生命周期日志包含阶段、`elapsed_ms` 和字节数；stdout 只输出最终路径或结果摘要。
 
 当 DSN 指向本机且请求端口唯一对应一个运行中的 Docker 容器时，restore 的目标库预检和实际导入都在该容器内通过 `docker exec` 使用默认 Unix socket；只有未识别到唯一映射容器时，才使用宿主机 `mysql` 或临时 Docker client fallback。
 
@@ -75,7 +75,7 @@ restore 会覆盖或删除 dump 中同名表及数据，不能整体回滚。完
 
 先查看命令帮助：
 
-```powershell
+```bash
 dbtalk mysql user --help
 dbtalk mysql grant --help
 dbtalk mysql revoke --help
