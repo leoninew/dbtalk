@@ -28,6 +28,7 @@ from dbtalk.database.connection import (
 from dbtalk.database.dsn import dsn_from_environment, dsn_metadata, parse_dsn, sqlite_dsn
 from dbtalk.database.models import (
     ColumnDefinition,
+    DatabaseDriver,
     DatabaseOperationError,
     DatabaseTransferError,
     ExportOptions,
@@ -72,6 +73,12 @@ def test_dsn_parses_supported_sync_and_async_urls() -> None:
     assert parse_dsn("postgresql+psycopg://user:secret@db.example/app").url.drivername == (
         "postgresql+psycopg"
     )
+    assert parse_dsn("mysql+pymysql://user:secret@db.example/").database is None
+    assert parse_dsn("mysql+asyncmy://user:secret@db.example/", async_mode=True).database is None
+    assert parse_dsn("postgresql+psycopg://user:secret@db.example/").database is None
+    assert (
+        parse_dsn("postgresql+psycopg://user:secret@db.example/", async_mode=True).database is None
+    )
     assert parse_dsn("sqlite:///data.db", async_mode=True).url.drivername == "sqlite+aiosqlite"
 
 
@@ -80,8 +87,6 @@ def test_dsn_rejects_invalid_or_unsupported_values() -> None:
         parse_dsn("")
     with pytest.raises(DatabaseOperationError, match="unsupported database dialect"):
         parse_dsn("oracle+oracledb://user:pass@host/app")
-    with pytest.raises(DatabaseOperationError, match="database name"):
-        parse_dsn("postgresql+psycopg://user:pass@host/")
     with pytest.raises(DatabaseOperationError, match="sqlite DSN"):
         parse_dsn("sqlite://")
     with pytest.raises(DatabaseOperationError, match="environment variable"):
@@ -381,6 +386,13 @@ def test_canonical_dsn_transfer_validation_and_environment(tmp_path: Path) -> No
         validate_connection(TransferConnection("postgresql"))
     with pytest.raises(DatabaseTransferError, match="does not match"):
         validate_connection(TransferConnection("sqlite", dsn="postgresql+psycopg://u:p@h/db"))
+    database_free_connections: tuple[tuple[DatabaseDriver, str], ...] = (
+        ("mysql", "mysql+pymysql://u:p@h/"),
+        ("postgresql", "postgresql+psycopg://u:p@h/"),
+    )
+    for driver, database_free_dsn in database_free_connections:
+        with pytest.raises(DatabaseTransferError, match="transfer requires a database name"):
+            validate_connection(TransferConnection(driver, dsn=database_free_dsn))
     monkeypatch = pytest.MonkeyPatch()
     try:
         monkeypatch.setenv("DBTALK_CANONICAL_DSN", dsn)

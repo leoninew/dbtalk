@@ -1,3 +1,3 @@
 """MySQL backup/restore and SQLite/MySQL JSONL transfer CLI."""
 
-__version__ = "0.1.0"
+__version__ = "0.19.0"

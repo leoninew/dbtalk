@@ -24,6 +24,8 @@ postgresql+psycopg://user:password@host:5432/app
 
 `mysql://`、`postgres://`、`postgresql://`、Go 风格 `user:password@tcp(...)` 和数据库类型专用文件参数都不属于 canonical DSN，命令会拒绝。密码可放在环境变量中，避免出现在进程参数中。
 
+MySQL 与 PostgreSQL URL 的末尾 database path 在语法上可省略，例如 `mysql+pymysql://user:password@host:3306/`。`query` 与 `exec` 可将这种 URL 原样交给 driver；`export` 与 `import` 必须在 DSN 中明确带有 database name，避免读写 driver 默认库。SQLite 的 database path 始终必填。
+
 ## Query / Exec
 
 SQL 使用 SQLAlchemy named bind 参数。参数格式为可重复的 `NAME=JSON_VALUE`，字符串需要使用 JSON 字符串表示。两个命令都有 `--timeout` / `-t`，单位为秒，只接受正整数。省略时使用配置中的 `database.operation_timeout_seconds`（默认 `30`）。超时仅针对当前单条语句。
@@ -89,7 +91,7 @@ uv run dbtalk export \
 | 选项 | 说明 |
 | --- | --- |
 | `--source sqlite|mysql|postgresql` | 必填，必须与 DSN dialect 一致。 |
-| `--dsn DSN` / `--dsn-env NAME` | 必须二选一。 |
+| `--dsn DSN` / `--dsn-env NAME` | 必须二选一；MySQL/PostgreSQL DSN 必须明确带有 database name。 |
 | `--output FILE_OR_DIRECTORY` | 可选的 JSONL 输出文件，或已有的输出目录。 |
 | `--tz IANA_NAME` | 无时区日期时间的解释时区，默认 `UTC`。 |
 | `--include-table NAME` | 限定导出的表，可重复指定。 |
@@ -122,7 +124,7 @@ uv run dbtalk import \
 | 选项 | 说明 |
 | --- | --- |
 | `--target sqlite|mysql|postgresql` | 必填，必须与 DSN dialect 一致。 |
-| `--dsn DSN` / `--dsn-env NAME` | 必须二选一。 |
+| `--dsn DSN` / `--dsn-env NAME` | 必须二选一；MySQL/PostgreSQL DSN 必须明确带有 database name。 |
 | `--input FILE` | 必填的 JSONL 或 gzip JSONL 输入文件。 |
 | `--mode insert|upsert` | 必填的写入模式。 |
 | `--tz IANA_NAME` | 写入无时区日期时间时的时区，默认 `UTC`。 |

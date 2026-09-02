@@ -42,7 +42,7 @@ class ParsedDsn:
 
     @property
     def database(self) -> str | None:
-        return self.url.database
+        return self.url.database or None
 
     @property
     def host(self) -> str | None:
@@ -80,8 +80,6 @@ def parse_dsn(value: str, *, async_mode: bool = False) -> ParsedDsn:
     _validate_driver(dialect, driver, async_mode=async_mode)
     if dialect == "sqlite" and not url.database:
         raise DatabaseOperationError("sqlite DSN must include a database path")
-    if dialect != "sqlite" and not url.database:
-        raise DatabaseOperationError(f"{dialect} DSN must include a database name")
     _validate_port(url)
 
     target_driver = (ASYNC_DRIVERS if async_mode else SYNC_DRIVERS)[dialect]

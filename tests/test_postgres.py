@@ -79,6 +79,23 @@ def test_connection_builds_a_password_free_libpq_uri() -> None:
     )
 
 
+def test_connection_uses_an_explicit_target_for_a_database_free_dsn() -> None:
+    native_connection = PostgresConnection.from_parsed_dsn(
+        parse_dsn("postgresql+psycopg://backup:secret@db.example.test:5433/?sslmode=require"),
+        database="target_database",
+    )
+
+    assert native_connection.database == "target_database"
+    assert (
+        native_connection.libpq_uri()
+        == "postgresql://backup@db.example.test:5433/target_database?sslmode=require"
+    )
+    with pytest.raises(ValueError, match="--database or a DSN database"):
+        PostgresConnection.from_parsed_dsn(
+            parse_dsn("postgresql+psycopg://backup:secret@db.example.test:5433/")
+        )
+
+
 def test_postgres_connection_rejects_another_database_dialect() -> None:
     parsed = parse_dsn("mysql+pymysql://backup:secret@db.example.test/app")
 
@@ -472,7 +489,9 @@ def test_cli_uses_postgres_dsn_and_rejects_invalid_restore_flags(tmp_path: Path)
                 "postgres",
                 "dump",
                 "--dsn",
-                "postgresql+psycopg://backup:secret@localhost/app",
+                "postgresql+psycopg://backup:secret@localhost/",
+                "--database",
+                "target_database",
                 "--compression-level",
                 "4",
                 "--output",
@@ -483,7 +502,28 @@ def test_cli_uses_postgres_dsn_and_rejects_invalid_restore_flags(tmp_path: Path)
     assert result.exit_code == 0, result.output
     assert "PostgreSQL dump written to" in result.output
     assert dump.call_args.args[0].compression_level == 4
-    assert dump.call_args.args[0].connection.database == "app"
+    assert dump.call_args.args[0].connection.database == "target_database"
+
+    with patch(
+        "dbtalk.postgres.cli.restore_database",
+        side_effect=lambda options: options.input.resolve(),
+    ) as restore:
+        restore_result = runner.invoke(
+            main_command,
+            [
+                "postgres",
+                "restore",
+                "--dsn",
+                "postgresql+psycopg://backup:secret@localhost/",
+                "--database",
+                "restore_target",
+                "--input",
+                str(input_path),
+            ],
+        )
+
+    assert restore_result.exit_code == 0, restore_result.output
+    assert restore.call_args.args[0].connection.database == "restore_target"
 
     invalid_result = runner.invoke(
         main_command,
@@ -500,10 +540,20 @@ def test_cli_uses_postgres_dsn_and_rejects_invalid_restore_flags(tmp_path: Path)
     assert invalid_result.exit_code == 2
     assert "--if-exists requires --clean" in invalid_result.output
 
+    for command in ("dump", "restore"):
+        help_result = runner.invoke(main_command, ["postgres", command, "--help"])
+        assert help_result.exit_code == 0, help_result.output
+        assert "--database" in help_result.output
+
 
 def test_cli_requires_a_canonical_postgres_dsn() -> None:
     with pytest.raises(click.UsageError, match="postgresql\\+psycopg"):
         postgres_connection_from_dsn("postgresql://backup:secret@localhost/app", None)
+
+
+def test_cli_requires_a_target_for_a_database_free_postgres_dsn() -> None:
+    with pytest.raises(click.UsageError, match="--database or a DSN database"):
+        postgres_connection_from_dsn("postgresql+psycopg://backup:secret@localhost/", None)
 
 
 def test_pgpass_environment_does_not_mutate_process_environment() -> None:

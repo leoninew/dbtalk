@@ -33,21 +33,28 @@ class PostgresConnection:
     database: str
 
     @classmethod
-    def from_parsed_dsn(cls, parsed: ParsedDsn) -> PostgresConnection:
+    def from_parsed_dsn(
+        cls,
+        parsed: ParsedDsn,
+        *,
+        database: str | None = None,
+    ) -> PostgresConnection:
         if parsed.dialect != "postgresql":
             raise ValueError("PostgreSQL dump and restore require a postgresql+psycopg DSN")
         host = parsed.host
         user = parsed.url.username
-        database = parsed.database
-        if not host or not user or not database:
-            raise ValueError("PostgreSQL DSN must include host, user, and database")
+        target_database = database or parsed.database
+        if not host or not user:
+            raise ValueError("PostgreSQL DSN must include host and user")
+        if not target_database:
+            raise ValueError("PostgreSQL dump and restore require --database or a DSN database")
         return cls(
             url=parsed.url,
             host=host,
             port=parsed.port or DEFAULT_POSTGRES_PORT,
             user=user,
             password=parsed.url.password or "",
-            database=database,
+            database=target_database,
         )
 
     def libpq_uri(self, *, host: str | None = None, socket: bool = False) -> str:

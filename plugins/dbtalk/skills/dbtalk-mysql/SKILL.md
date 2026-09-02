@@ -17,7 +17,7 @@ DSN 的 host 从当前执行机解释。`localhost` 或 `127.0.0.1` 指向当前
 
 ## 配置与凭据
 
-从项目根目录的 `dbtalk.yaml` 读取默认配置。设置 `DBTALK_ENVKEY=local` 时，`.env.local` 中的 `DBTALK_*` 值覆盖 YAML。数据库连接必须通过完整的 `--dsn DSN` 或 `--dsn-env NAME` 二选一提供，不再使用 host、port、user、password、database 分散参数。支持的 MySQL DSN 是 `mysql+pymysql://user:password@host:3306/database`。将含凭据的 DSN 保存到环境变量，或在用户已提供或明确授权该 DSN 时写入当前目录、Git 已忽略的 `.env` 中的 `DBTALK_*` 条目。`--dsn-env DBTALK_*` 优先使用同名进程环境变量；变量不存在时才读取当前目录 `.env`。不得猜测凭据，也不要将 DSN 写入命令行、日志、文档、`.env.example` 或提交记录：
+从项目根目录的 `dbtalk.yaml` 读取默认配置。设置 `DBTALK_ENVKEY=local` 时，`.env.local` 中的 `DBTALK_*` 值覆盖 YAML。数据库连接必须通过 canonical `--dsn DSN` 或 `--dsn-env NAME` 二选一提供，不再使用 host、port、user、password、database 分散参数。支持的 MySQL DSN 是 `mysql+pymysql://user:password@host:3306/database`，其中 database path 可省略。将含凭据的 DSN 保存到环境变量，或在用户已提供或明确授权该 DSN 时写入当前目录、Git 已忽略的 `.env` 中的 `DBTALK_*` 条目。`--dsn-env DBTALK_*` 优先使用同名进程环境变量；变量不存在时才读取当前目录 `.env`。不得猜测凭据，也不要将 DSN 写入命令行、日志、文档、`.env.example` 或提交记录：
 
 ```env
 DBTALK_APP_DSN=mysql+pymysql://user:password@host:3306/database
@@ -37,13 +37,13 @@ dbtalk mysql schema drop --dsn-env DBTALK_MYSQL_MANAGEMENT_DSN --name app_db --y
 
 ## Dump
 
-dump 需要完整的 MySQL DSN。未传 `--output` 时，输出默认为当前目录的 `data/<database>-<timestamp>.sql`，并会自动创建配置的输出目录。显式传入 `--output` 且路径是已有目录时，也会在其中生成同样的时间戳文件。其他路径视为文件，父目录必须已存在；不存在的路径不会被推断为目录或自动创建。
+dump 需要 MySQL DSN 和明确 target database，按 `--database > DSN database > 失败` 决定。未传 `--output` 时，输出默认为当前目录的 `data/<database>-<timestamp>.sql`，并会自动创建配置的输出目录。显式传入 `--output` 且路径是已有目录时，也会在其中生成同样的时间戳文件。其他路径视为文件，父目录必须已存在；不存在的路径不会被推断为目录或自动创建。
 
 `dump` 是 MySQL 原生 SQL 备份入口；不要用 `dbtalk export` 代替它。只有用户同时要求 JSONL 数据导出时，才额外运行 `dbtalk export`。
 
 ```bash
-dbtalk mysql dump --dsn-env DBTALK_APP_DSN --output ./data/app.sql
-dbtalk mysql dump --dsn-env DBTALK_APP_DSN --output ./data/app.sql --archive
+dbtalk mysql dump --dsn-env DBTALK_APP_DSN --database app --output ./data/app.sql
+dbtalk mysql dump --dsn-env DBTALK_APP_DSN --database app --output ./data/app.sql --archive
 ```
 
 `--archive` 写入 `.sql.gz`；输出路径没有 `.gz` 后缀时会自动追加。dump 固定保留顶层 `USE` 并传递 `--no-create-db`，不会生成 `CREATE DATABASE` 或 `DROP DATABASE`。`--skip-definer` 是显式可选项，只向原生 `mysqldump` 传递该参数；默认保留 `DEFINER`，客户端不支持时直接失败。非本机 MySQL host 使用连接压缩；`localhost` 与 `127.0.0.1` 不使用该参数。
@@ -52,13 +52,13 @@ dump 先写同目录临时文件，成功且非空后才发布；客户端、复
 
 ## Restore
 
-restore 需要已有的 `.sql` 或 `.sql.gz` 文件，以及完整的 MySQL DSN。目标库必须已存在；restore 不会创建或删除数据库。
+restore 需要已有的 `.sql` 或 `.sql.gz` 文件、MySQL DSN 和明确 target database，按 `--database > DSN database > 失败` 决定。目标库必须已存在；restore 不会创建或删除数据库。
 
 ```bash
 dbtalk mysql restore --dsn-env DBTALK_APP_DSN --database app --input ./data/app-20260820-120000.sql.gz
 ```
 
-`--database TARGET` 优先于 `mysqlrestore.database` 和 DSN database。DSN 仍必须包含 database，用于连接维护库；目标库由 restore 前的只读探测确认存在。输入中的 `CREATE DATABASE` 或 `DROP DATABASE` 会在导入客户端启动前被拒绝，不能依靠 restore 执行数据库生命周期操作。存在的顶层 `USE` 只在临时输入中重写为目标库，原始 dump 文件不会修改。
+`--database TARGET` 优先于 DSN database；无库名 DSN 必须显式提供该选项。目标库由 restore 前的只读探测确认存在。输入中的 `CREATE DATABASE` 或 `DROP DATABASE` 会在导入客户端启动前被拒绝，不能依靠 restore 执行数据库生命周期操作。存在的顶层 `USE` 只在临时输入中重写为目标库，原始 dump 文件不会修改。
 
 restore 会覆盖或删除 dump 中同名表及数据，不能整体回滚。完成后确认命令成功退出，并按需检查目标表数或代表性数据。dump/restore 的 stderr 生命周期日志包含阶段、`elapsed_ms` 和字节数；stdout 只输出最终路径或结果摘要。
 
@@ -82,6 +82,6 @@ dbtalk mysql revoke --help
 dbtalk mysql permissions --help
 ```
 
-user 管理和 grant/revoke 需要完整管理 DSN。密码只能通过 `--password-env NAME` 引用，不得作为 CLI 值或输出内容。MySQL user 必须提供精确的 `--user` 和 `--host`；允许 `localhost`、单个 DNS 名称、IPv4、IPv6，以及字面量 `%` 账号 host。`%` 仅表示数据库中已存在的精确 `user@%` 账号，不得扩展为其他模式；仍不允许包含 `_` 或部分通配符的 host。
+user 管理和 grant/revoke 需要 canonical 管理 DSN；user 操作可省略 database path，grant/revoke 未传 `--database` 时仍需要 DSN database。密码只能通过 `--password-env NAME` 引用，不得作为 CLI 值或输出内容。MySQL user 必须提供精确的 `--user` 和 `--host`；允许 `localhost`、单个 DNS 名称、IPv4、IPv6，以及字面量 `%` 账号 host。`%` 仅表示数据库中已存在的精确 `user@%` 账号，不得扩展为其他模式；仍不允许包含 `_` 或部分通配符的 host。
 
 grant/revoke 支持 `readonly`、`readwrite`、`migrator` profile，或可重复的 `--privilege NAME`；两者互斥。权限层级为 `migrator > readwrite > readonly`：`readonly` 只读，`readwrite` 用于常规应用增删改查，`migrator` 再加入目标 database 的 DDL 和建库所需全局 `CREATE ON *.*`。MySQL 不区分建库 `CREATE` 与对象 `CREATE`，因此该能力为实例级能力，只用于受控迁移账号。固定 profile 不包含 `GRANT`、`REVOKE` 或 `GRANT OPTION`。`--database` 可省略，默认使用 DSN database。执行启用、禁用、轮换密码、删除、授权或撤销前，必须确认目标、资源、profile/privilege 和写入权限，并传入 `--yes`。`permissions list/show` 可查看当前 DSN 可见的原生授权，并支持主体和 database 筛选。不要传入完整 SQL；细粒度 privilege 由 MySQL 服务端决定是否允许。

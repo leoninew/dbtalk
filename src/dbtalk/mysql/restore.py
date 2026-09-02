@@ -16,8 +16,6 @@ from pathlib import Path
 
 import click
 
-from dbtalk.settings import MySQLRestoreConfig
-
 from .client import (
     docker_database_host,
     docker_host_gateway_args,
@@ -191,13 +189,13 @@ class MysqlRestoreOptions:
 
 @dataclass(frozen=True)
 class MysqlRestoreOverrides:
-    host: str | None
-    port: int | None
-    user: str | None
-    password: str | None
+    host: str
+    port: int
+    user: str
+    password: str
     input: Path
-    database: str | None
-    dsn_database: str | None = None
+    target_database: str | None
+    dsn_database: str | None
 
 
 def mysql_restore_command_args(options: MysqlRestoreOptions) -> list[str]:
@@ -226,32 +224,33 @@ def generate_restore_command(options: MysqlRestoreOptions) -> str:
     return f"{command} < {shlex.quote(str(options.input))}"
 
 
-def resolve_restore_options(
-    config: MySQLRestoreConfig,
-    overrides: MysqlRestoreOverrides,
-) -> MysqlRestoreOptions:
-    host = overrides.host if overrides.host is not None else config.host
-    port = overrides.port if overrides.port is not None else config.port
-    user = overrides.user if overrides.user is not None else config.user
-    password = overrides.password if overrides.password is not None else config.password
-    database = overrides.database or config.database or overrides.dsn_database
-    missing = [name for name, value in (("user", user), ("password", password)) if not value]
+def resolve_restore_options(overrides: MysqlRestoreOverrides) -> MysqlRestoreOptions:
+    database = overrides.target_database or overrides.dsn_database
+    missing = [
+        name
+        for name, value in (
+            ("user", overrides.user),
+            ("password", overrides.password),
+        )
+        if not value
+    ]
     if not database:
         missing.append("database")
     if missing:
         names = ", ".join(missing)
         raise click.ClickException(
-            f"Missing mysqlrestore configuration: {names}. "
-            "Set mysqlrestore values or pass the corresponding CLI options."
+            f"Missing MySQL restore values: {names}. Provide user and password in the DSN, "
+            "and provide the target database with --database or in the DSN."
         )
+    assert database is not None
 
     return MysqlRestoreOptions(
-        host=host,
-        port=port,
-        user=user,
-        password=password,
+        host=overrides.host,
+        port=overrides.port,
+        user=overrides.user,
+        password=overrides.password,
         input=overrides.input,
-        database=database or None,
+        database=database,
     )
 
 

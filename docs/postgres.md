@@ -30,6 +30,8 @@ export APP_DSN='postgresql+psycopg://backup:password@db.example.com:5432/app?ssl
 
 脚本中优先使用 `--dsn-env`，避免密码出现在进程参数中。`dbtalk` 向 native client 传递无密码的 libpq URI；本机客户端读取临时 `.pgpass`，Docker client 通过子进程环境读取密码。正常输出、日志和错误摘要不会回显密码。
 
+PostgreSQL URL 的 database path 在语法上可省略。`schema list/create`、role 和权限查看可使用这种 DSN；`schema drop` 必须带有维护 database 以避免删除当前连接数据库。dump/restore 的目标按 `--database > DSN database > 失败` 决定；grant/revoke 未显式给出 `--database` 或 `--schema` 时仍需要 DSN database。
+
 对于 `localhost` 或 `127.0.0.1`，若请求端口唯一对应一个运行中的 Docker PostgreSQL 容器，dump 和 restore 优先复用该容器：通过 `docker exec` 调用容器内 `pg_dump` / `pg_restore`，使用容器默认 Unix socket；dump 的 archive 通过临时文件和 `docker cp` 取回，restore 通过 `docker cp` 放入后导入并清理。未识别到唯一映射容器时，才优先使用本机 `pg_dump` / `pg_restore`；本机客户端缺失时使用本机 Docker 中已有的配置 image：
 
 ```yaml
@@ -42,7 +44,7 @@ postgres:
 
 ## Schema management
 
-`schema` 子命令管理 PostgreSQL schema/database，不执行任意 SQL、不管理 role，也不替代 dump/restore。管理 DSN 必须连接到目标以外的维护库，通常为 `postgres`；账号还需要相应的建库或删库权限。
+`schema` 子命令管理 PostgreSQL schema/database，不执行任意 SQL、不管理 role，也不替代 dump/restore。`list` 与 `create` 的管理 DSN 可以省略 database path；`drop` 必须连接到目标以外的维护 database，通常为 `postgres`。账号还需要相应的建库或删库权限。
 
 ```bash
 export POSTGRES_MANAGEMENT_DSN='postgresql+psycopg://operator:password@db.example.com:5432/postgres'
@@ -59,11 +61,12 @@ uv run dbtalk postgres schema drop --dsn-env POSTGRES_MANAGEMENT_DSN --name app_
 ```bash
 uv run dbtalk postgres dump \
   --dsn-env APP_DSN \
+  --database app \
   --output ./data/app.dump \
   --compression-level 6
 ```
 
-dump 始终生成 `pg_dump --format=custom` 的 `.dump` archive。省略 `--output` 时创建 `postgres.output_directory`，并生成 `<database>-<timestamp>.dump`；已有目录同样生成时间戳文件。显式文件路径的父目录必须已经存在。
+dump 的目标按 `--database > DSN database > 失败` 决定，并始终生成 `pg_dump --format=custom` 的 `.dump` archive。省略 `--output` 时创建 `postgres.output_directory`，并生成 `<database>-<timestamp>.dump`；已有目录同样生成时间戳文件。显式文件路径的父目录必须已经存在。
 
 custom archive 具有 PostgreSQL 原生内部压缩，不能等同于 `.sql.gz`。不要给 `.dump` 再套 gzip；`pg_restore` 可以直接读取它。`--compression-level` 仅接受 `0` 到 `9`；省略时保留 native client 的默认 archive 压缩行为。
 
@@ -72,13 +75,14 @@ custom archive 具有 PostgreSQL 原生内部压缩，不能等同于 `.sql.gz`�
 ```bash
 uv run dbtalk postgres restore \
   --dsn-env APP_DSN \
+  --database app \
   --input ./data/app.dump \
   --clean \
   --if-exists \
   --jobs 4
 ```
 
-目标数据库必须已经存在，并由 DSN 明确指定。restore 会先运行 `pg_restore --list` 校验 archive；无效 archive 在连接和写入目标库前失败。
+目标数据库必须已经存在，并按 `--database > DSN database > 失败` 选择。restore 会先运行 `pg_restore --list` 校验 archive；无效 archive 在连接和写入目标库前失败。
 
 默认恢复跳过 owner 与 ACL，以支持不同账号管理的环境。需要原样恢复时，显式传入 `--preserve-owner` 和/或 `--preserve-privileges`。`--jobs` 只接受正整数，适用于 custom archive。
 

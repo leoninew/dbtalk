@@ -46,6 +46,12 @@ postgres.add_command(permissions)
 @click.option("--dsn", "dsn_value", help="Complete PostgreSQL SQLAlchemy-style DSN.")
 @click.option("--dsn-env", help="Environment variable containing the PostgreSQL DSN.")
 @click.option(
+    "--database",
+    "target_database",
+    metavar="TARGET",
+    help="Database to dump. Defaults to the DSN database.",
+)
+@click.option(
     "--output",
     type=click.Path(path_type=Path),
     help="Custom archive output file or existing directory. Defaults to postgres.output_directory.",
@@ -60,13 +66,18 @@ def dump_command(
     ctx: click.Context,
     dsn_value: str | None,
     dsn_env: str | None,
+    target_database: str | None,
     output: Path | None,
     compression_level: int | None,
 ) -> None:
     """Export one PostgreSQL database as a custom archive."""
 
     settings = context_settings(ctx)
-    connection = postgres_connection_from_dsn(dsn_value, dsn_env)
+    connection = postgres_connection_from_dsn(
+        dsn_value,
+        dsn_env,
+        target_database=target_database,
+    )
     options = resolve_dump_options(
         settings.postgres,
         connection,
@@ -80,6 +91,12 @@ def dump_command(
 @postgres.command("restore", context_settings=CONTEXT_SETTINGS)
 @click.option("--dsn", "dsn_value", help="Complete PostgreSQL SQLAlchemy-style DSN.")
 @click.option("--dsn-env", help="Environment variable containing the PostgreSQL DSN.")
+@click.option(
+    "--database",
+    "target_database",
+    metavar="TARGET",
+    help="Existing database to receive the archive. Defaults to the DSN database.",
+)
 @click.option(
     "--input",
     required=True,
@@ -108,6 +125,7 @@ def restore_command(
     ctx: click.Context,
     dsn_value: str | None,
     dsn_env: str | None,
+    target_database: str | None,
     input: Path,
     clean: bool,
     if_exists: bool,
@@ -120,7 +138,11 @@ def restore_command(
     if if_exists and not clean:
         raise click.UsageError("--if-exists requires --clean")
     settings = context_settings(ctx)
-    connection = postgres_connection_from_dsn(dsn_value, dsn_env)
+    connection = postgres_connection_from_dsn(
+        dsn_value,
+        dsn_env,
+        target_database=target_database,
+    )
     restored_input = restore_database(
         PostgresRestoreOptions(
             connection=connection,
@@ -143,6 +165,8 @@ def context_settings(ctx: click.Context) -> Settings:
 def postgres_connection_from_dsn(
     dsn: str | None,
     dsn_env: str | None,
+    *,
+    target_database: str | None = None,
 ) -> PostgresConnection:
     """Resolve one explicit PostgreSQL DSN into native client connection details."""
 
@@ -153,6 +177,6 @@ def postgres_connection_from_dsn(
     except DatabaseOperationError as error:
         raise click.UsageError(str(error)) from error
     try:
-        return PostgresConnection.from_parsed_dsn(parsed)
+        return PostgresConnection.from_parsed_dsn(parsed, database=target_database)
     except ValueError as error:
         raise click.UsageError(str(error)) from error

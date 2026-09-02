@@ -150,6 +150,18 @@ def test_postgresql_cannot_drop_the_connected_database(monkeypatch: pytest.Monke
     create_engine.assert_not_called()
 
 
+def test_postgresql_drop_requires_a_maintenance_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    create_engine = Mock()
+    monkeypatch.setattr(postgres_database, "create_engine", create_engine)
+
+    with pytest.raises(DatabaseOperationError, match="maintenance database"):
+        postgres_database.drop_database(
+            parse_dsn("postgresql+psycopg://admin:secret@db.example/"), "app"
+        )
+
+    create_engine.assert_not_called()
+
+
 @pytest.mark.parametrize("name", ["", "   ", "bad\x00name", "bad\nname"])
 def test_database_name_validation_happens_before_connecting(
     monkeypatch: pytest.MonkeyPatch, name: str

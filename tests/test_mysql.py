@@ -28,7 +28,7 @@ from dbtalk.mysql.cli import (
     restore_database,
 )
 from dbtalk.mysql.client import docker_mapped_mysql_container
-from dbtalk.settings import MySQLDumpConfig, MySQLRestoreConfig
+from dbtalk.settings import MySQLDumpConfig
 
 
 class MysqlCommandTests(unittest.TestCase):
@@ -451,11 +451,12 @@ class MysqlCommandTests(unittest.TestCase):
             options = resolve_dump_options(
                 config,
                 MysqlDumpOverrides(
-                    host=None,
-                    port=None,
-                    user=None,
-                    password=None,
-                    database=None,
+                    host="localhost",
+                    port=3306,
+                    user="root",
+                    password="secret",
+                    target_database="example",
+                    dsn_database=None,
                     output=Path("exports"),
                     archive=True,
                 ),
@@ -629,7 +630,7 @@ class MysqlCommandTests(unittest.TestCase):
 
             self.assertFalse(Path("backup.sql").exists())
 
-    def test_resolve_dump_options_uses_config_defaults_and_cli_overrides(self) -> None:
+    def test_resolve_dump_options_uses_dsn_values_and_target_precedence(self) -> None:
         config = MySQLDumpConfig(
             host="db.example.test",
             port=3307,
@@ -644,40 +645,43 @@ class MysqlCommandTests(unittest.TestCase):
             configured = resolve_dump_options(
                 config,
                 MysqlDumpOverrides(
-                    host=None,
-                    port=None,
-                    user=None,
-                    password=None,
-                    database=None,
+                    host="dsn.example.test",
+                    port=3310,
+                    user="dsn-user",
+                    password="dsn-password",
+                    target_database=None,
+                    dsn_database="dsn_database",
                     output=None,
                 ),
             )
             overridden = resolve_dump_options(
                 config,
                 MysqlDumpOverrides(
-                    host="backup.example.test",
-                    port=3308,
-                    user="cli-user",
-                    password="cli-password",
-                    database="cli-database",
+                    host="dsn.example.test",
+                    port=3310,
+                    user="dsn-user",
+                    password="dsn-password",
+                    target_database="target_database",
+                    dsn_database="dsn_database",
                     output=Path("explicit.sql"),
                     skip_definer=True,
                 ),
             )
 
-            self.assertEqual(configured.host, "db.example.test")
-            self.assertEqual(configured.port, 3307)
-            self.assertEqual(configured.user, "backup")
-            self.assertEqual(configured.password, "test-password")
-            self.assertEqual(configured.database, "app")
+            self.assertEqual(configured.host, "dsn.example.test")
+            self.assertEqual(configured.port, 3310)
+            self.assertEqual(configured.user, "dsn-user")
+            self.assertEqual(configured.password, "dsn-password")
+            self.assertEqual(configured.database, "dsn_database")
             self.assertTrue(configured.output.parent.is_dir())
             self.assertEqual(configured.output.parent, Path.cwd() / "backups" / "mysql")
+            self.assertTrue(configured.output.name.startswith("dsn_database-"))
 
-        self.assertEqual(overridden.host, "backup.example.test")
-        self.assertEqual(overridden.port, 3308)
-        self.assertEqual(overridden.user, "cli-user")
-        self.assertEqual(overridden.password, "cli-password")
-        self.assertEqual(overridden.database, "cli-database")
+        self.assertEqual(overridden.host, "dsn.example.test")
+        self.assertEqual(overridden.port, 3310)
+        self.assertEqual(overridden.user, "dsn-user")
+        self.assertEqual(overridden.password, "dsn-password")
+        self.assertEqual(overridden.database, "target_database")
         self.assertEqual(overridden.output, Path("explicit.sql"))
         self.assertTrue(overridden.skip_definer)
 
@@ -685,24 +689,25 @@ class MysqlCommandTests(unittest.TestCase):
         config = MySQLDumpConfig(
             host="localhost",
             port=3306,
-            user="",
-            password="",
-            database="",
+            user="configured-user",
+            password="configured-password",
+            database="configured_database",
             output_directory="data",
         )
 
         with self.assertRaisesRegex(
             click.ClickException,
-            "Missing mysqldump configuration: user, password, database",
+            "Missing MySQL dump values: database",
         ):
             resolve_dump_options(
                 config,
                 MysqlDumpOverrides(
-                    host=None,
-                    port=None,
-                    user=None,
-                    password=None,
-                    database=None,
+                    host="localhost",
+                    port=3306,
+                    user="dsn-user",
+                    password="dsn-password",
+                    target_database=None,
+                    dsn_database=None,
                     output=None,
                 ),
             )
@@ -1185,56 +1190,90 @@ class MysqlCommandTests(unittest.TestCase):
             "-u 'backup user' < 'backup file.sql'",
         )
 
-    def test_resolve_restore_options_merges_config_and_overrides(self) -> None:
-        config = MySQLRestoreConfig(
-            host="db.example.test",
-            port=3307,
-            user="configured-user",
-            password="configured-password",
-            database="configured_database",
-        )
-
+    def test_resolve_restore_options_uses_dsn_values_and_target_precedence(self) -> None:
         options = resolve_restore_options(
-            config,
             MysqlRestoreOverrides(
-                host=None,
+                host="dsn.example.test",
                 port=3308,
-                user="cli-user",
-                password=None,
+                user="dsn-user",
+                password="dsn-password",
                 input=Path("backup.sql"),
-                database=None,
-            ),
+                target_database="target_database",
+                dsn_database="dsn_database",
+            )
         )
 
-        self.assertEqual(options.host, "db.example.test")
+        self.assertEqual(options.host, "dsn.example.test")
         self.assertEqual(options.port, 3308)
-        self.assertEqual(options.user, "cli-user")
-        self.assertEqual(options.password, "configured-password")
-        self.assertEqual(options.database, "configured_database")
+        self.assertEqual(options.user, "dsn-user")
+        self.assertEqual(options.password, "dsn-password")
+        self.assertEqual(options.database, "target_database")
         self.assertEqual(options.input, Path("backup.sql"))
 
     def test_resolve_restore_options_falls_back_to_dsn_database(self) -> None:
-        config = MySQLRestoreConfig(
-            host="db.example.test",
-            port=3306,
-            user="restore-user",
-            password="configured-password",
-        )
-
         options = resolve_restore_options(
-            config,
             MysqlRestoreOverrides(
-                host=None,
-                port=None,
-                user=None,
-                password=None,
+                host="dsn.example.test",
+                port=3306,
+                user="restore-user",
+                password="dsn-password",
                 input=Path("backup.sql"),
-                database=None,
+                target_database=None,
                 dsn_database="dsn_database",
-            ),
+            )
         )
 
         self.assertEqual(options.database, "dsn_database")
+
+    def test_resolve_restore_options_requires_a_target_database(self) -> None:
+        with self.assertRaisesRegex(click.ClickException, "Missing MySQL restore values: database"):
+            resolve_restore_options(
+                MysqlRestoreOverrides(
+                    host="dsn.example.test",
+                    port=3306,
+                    user="restore-user",
+                    password="dsn-password",
+                    input=Path("backup.sql"),
+                    target_database=None,
+                    dsn_database=None,
+                )
+            )
+
+    def test_cli_dump_uses_an_explicit_target_for_a_database_free_dsn(self) -> None:
+        runner = CliRunner()
+
+        with (
+            runner.isolated_filesystem(),
+            patch(
+                "dbtalk.mysql.cli.dump_database",
+                side_effect=lambda options: options.output.resolve(),
+            ) as dump,
+        ):
+            result = runner.invoke(
+                main_command,
+                [
+                    "mysql",
+                    "dump",
+                    "--dsn",
+                    "mysql+pymysql://dump-user:dump-password@db.example.test:3307/",
+                    "--database",
+                    "target_database",
+                    "--output",
+                    "backup.sql",
+                ],
+            )
+            options = dump.call_args.args[0]
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(options.host, "db.example.test")
+        self.assertEqual(options.port, 3307)
+        self.assertEqual(options.user, "dump-user")
+        self.assertEqual(options.password, "dump-password")
+        self.assertEqual(options.database, "target_database")
+        for command in ("dump", "restore"):
+            help_result = runner.invoke(main_command, ["mysql", command, "--help"])
+            self.assertEqual(help_result.exit_code, 0, help_result.output)
+            self.assertIn("--database", help_result.output)
 
     def test_cli_restores_input_with_explicit_dsn(self) -> None:
         runner = CliRunner()
@@ -1254,7 +1293,7 @@ class MysqlCommandTests(unittest.TestCase):
                     "mysql",
                     "restore",
                     "--dsn",
-                    "mysql+pymysql://cli-user:configured-password@db.example.test:3307/cli_database",
+                    "mysql+pymysql://cli-user:configured-password@db.example.test:3307/",
                     "--input",
                     "backup.sql",
                     "--database",

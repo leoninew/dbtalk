@@ -1,6 +1,6 @@
 # MySQL 手册
 
-`dbtalk mysql` 用于管理 MySQL 数据库，以及创建和还原原生 SQL dump。每个子命令都必须接受且只接受一个 `--dsn DSN` 或 `--dsn-env NAME`。
+`dbtalk mysql` 用于管理 MySQL 数据库，以及创建和还原原生 SQL dump。每个子命令都必须接受且只接受一个 canonical `--dsn DSN` 或 `--dsn-env NAME`。
 
 ```bash
 uv run dbtalk mysql --help
@@ -22,7 +22,7 @@ uv run dbtalk mysql permissions --help
 
 ## DSN
 
-MySQL backup/restore 只接受明确的 `mysql+pymysql://` DSN：
+MySQL 命令只接受明确的 `mysql+pymysql://` DSN：
 
 ```bash
 uv run dbtalk mysql dump \
@@ -35,11 +35,11 @@ uv run dbtalk mysql restore \
   --input ./data/app.sql.gz
 ```
 
-`mysql://`、`postgresql://`、`postgres://`、Go 风格 DSN 和 host/user/password/database 分散参数都不是 canonical DSN。完整 DSN 可能包含密码；脚本中优先使用 `--dsn-env`。密码只通过 `MYSQL_PWD` 传递给原生客户端，正常输出不会回显密码。
+`mysql://`、`postgresql://`、`postgres://`、Go 风格 DSN 和 host/user/password/database 分散参数都不是 canonical DSN。MySQL URL 的 database path 可省略；dump/restore 的目标随后按 `--database > DSN database > 失败` 决定。完整 DSN 可能包含密码；脚本中优先使用 `--dsn-env`。密码只通过 `MYSQL_PWD` 传递给原生客户端，正常输出不会回显密码。
 
 ## Schema management
 
-`schema` 子命令管理 MySQL schema/database 本身，不执行任意 SQL、不管理账号，也不替代 dump/restore。DSN 必须指向实例中一个已存在且可连接的管理库，所用账号需要相应的 MySQL 数据库管理权限。
+`schema` 子命令管理 MySQL schema/database 本身，不执行任意 SQL、不管理账号，也不替代 dump/restore。DSN 可省略 database path；所用账号需要相应的 MySQL 数据库管理权限。
 
 ```bash
 export MYSQL_MANAGEMENT_DSN='mysql+pymysql://operator:password@db.example.com:3306/mysql'
@@ -55,7 +55,8 @@ uv run dbtalk mysql schema drop --dsn-env MYSQL_MANAGEMENT_DSN --name app_db --y
 
 ```bash
 uv run dbtalk mysql dump \
-  --dsn 'mysql+pymysql://user:password@host:3306/app' \
+  --dsn 'mysql+pymysql://user:password@host:3306/' \
+  --database app \
   --output ./data/app.sql \
   --skip-definer \
   --archive
@@ -64,11 +65,12 @@ uv run dbtalk mysql dump \
 | 选项 | 说明 |
 | --- | --- |
 | `--dsn DSN` / `--dsn-env NAME` | 必须二选一的 MySQL DSN。 |
+| `--database TARGET` | 要导出的 database；优先于 DSN database。 |
 | `--output FILE_OR_DIRECTORY` | SQL 制品输出文件或已有输出目录。 |
 | `--archive` | 写入 gzip 压缩 dump。 |
 | `--skip-definer` | 将原生 `mysqldump --skip-definer` 透传给客户端。默认保留 `DEFINER`。 |
 
-dump 固定使用 `-B` 保留顶层 `USE`，并始终传递 `--no-create-db`，不会生成 `CREATE DATABASE` 或 `DROP DATABASE`。`--skip-definer` 不通过 `sed` 或其他文本替换实现；客户端不支持该参数时直接失败。
+dump 的目标按 `--database > DSN database > 失败` 决定。dump 固定使用 `-B` 保留顶层 `USE`，并始终传递 `--no-create-db`，不会生成 `CREATE DATABASE` 或 `DROP DATABASE`。`--skip-definer` 不通过 `sed` 或其他文本替换实现；客户端不支持该参数时直接失败。
 
 省略 `--output` 时使用配置中的 `mysqldump.output_directory`（默认 `data/`），生成 `<database>-<timestamp>.sql`。同秒已有文件时追加稳定序号，不覆盖已有制品。dump 先写同目录临时文件，成功且非空后才发布；`--archive` 的 gzip 文件也遵循相同规则。
 
@@ -83,11 +85,11 @@ uv run dbtalk mysql restore \
 
 | 选项 | 说明 |
 | --- | --- |
-| `--dsn DSN` / `--dsn-env NAME` | 必须二选一的完整 MySQL DSN；用于连接维护库。 |
-| `--database TARGET` | 已存在的恢复目标库。优先于 `mysqlrestore.database` 和 DSN database。 |
+| `--dsn DSN` / `--dsn-env NAME` | 必须二选一的 MySQL DSN。 |
+| `--database TARGET` | 已存在的恢复目标库；优先于 DSN database。 |
 | `--input FILE` | 必填的 SQL 或 gzip 压缩 SQL 输入文件。 |
 
-目标库必须在 restore 前由独立的 `dbtalk mysql schema create` 或其他明确流程创建。restore 会先检查目标库存在，再拒绝输入中的 `CREATE DATABASE` 或 `DROP DATABASE`，并只将顶层 `USE` 重写为目标库；不会修改原始输入文件。restore 可能覆盖或删除现有数据，执行前确认目标连接、输入来源和写入授权。
+restore 的目标按 `--database > DSN database > 失败` 决定。目标库必须在 restore 前由独立的 `dbtalk mysql schema create` 或其他明确流程创建。restore 会先检查目标库存在，再拒绝输入中的 `CREATE DATABASE` 或 `DROP DATABASE`，并只将顶层 `USE` 重写为目标库；不会修改原始输入文件。restore 可能覆盖或删除现有数据，执行前确认目标连接、输入来源和写入授权。
 
 dump 和 restore 会在 stderr 输出 `started`、`progress`、`completed` 和 `failed` 生命周期日志，包含阶段、耗时和可测量字节数；stdout 只输出最终路径或结果摘要。日志和错误不会输出密码、完整含密码 DSN 或 SQL 内容。
 
@@ -97,7 +99,7 @@ dump 和 restore 会在 stderr 输出 `started`、`progress`、`completed` 和 `
 
 ## 用户与授权
 
-`dbtalk mysql user` 管理 MySQL `username@host` account；`dbtalk mysql grant` 和 `revoke` 与 user 命令同级。所有管理命令使用管理 DSN，且必须在 `--dsn` 和 `--dsn-env` 间二选一。
+`dbtalk mysql user` 管理 MySQL `username@host` account；`dbtalk mysql grant` 和 `revoke` 与 user 命令同级。所有管理命令使用管理 DSN，且必须在 `--dsn` 和 `--dsn-env` 间二选一。管理 DSN 可省略 database path；grant/revoke 未显式给出 `--database` 时仍需要 DSN database 作为资源目标。
 
 ```bash
 export MYSQL_ADMIN_DSN='mysql+pymysql://admin:password@db.example:3306/app'

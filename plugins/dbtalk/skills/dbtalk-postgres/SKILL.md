@@ -17,7 +17,7 @@ dbtalk postgres schema --help
 
 ## 连接与客户端
 
-连接必须通过完整的 `--dsn DSN` 或 `--dsn-env NAME` 二选一提供，并使用 `postgresql+psycopg://user:password@host:5432/database`。脚本中把 DSN 保存到环境变量。对于 `--dsn-env DBTALK_*`，dbtalk 优先使用同名进程环境变量；变量不存在时才读取当前目录、Git 已忽略 `.env` 的同名值。代理在用户已提供或明确授权 DSN 时可创建或更新 `.env` 中的 `DBTALK_*` 条目，但不得猜测凭据或将它写入 `.env.example`、命令行、日志、skill、Git 提交或 archive 文件名：
+连接必须通过 canonical `--dsn DSN` 或 `--dsn-env NAME` 二选一提供，并使用 `postgresql+psycopg://user:password@host:5432/database`；database path 可省略。脚本中把 DSN 保存到环境变量。对于 `--dsn-env DBTALK_*`，dbtalk 优先使用同名进程环境变量；变量不存在时才读取当前目录、Git 已忽略 `.env` 的同名值。代理在用户已提供或明确授权 DSN 时可创建或更新 `.env` 中的 `DBTALK_*` 条目，但不得猜测凭据或将它写入 `.env.example`、命令行、日志、skill、Git 提交或 archive 文件名：
 
 ```bash
 export DBTALK_APP_DSN='postgresql+psycopg://backup:password@db.example.com:5432/app'
@@ -40,18 +40,18 @@ dbtalk postgres schema drop --dsn-env DBTALK_POSTGRES_MANAGEMENT_DSN --name app_
 ## Dump
 
 ```bash
-dbtalk postgres dump --dsn-env DBTALK_APP_DSN --output ./data/app.dump
-dbtalk postgres dump --dsn-env DBTALK_APP_DSN --compression-level 6
+dbtalk postgres dump --dsn-env DBTALK_APP_DSN --database app --output ./data/app.dump
+dbtalk postgres dump --dsn-env DBTALK_APP_DSN --database app --compression-level 6
 ```
 
-dump 只输出 custom `.dump` archive，默认在 `postgres.output_directory` 中生成带时间戳的文件。archive 已使用 PostgreSQL 原生内部压缩；不要使用 MySQL 的 `.sql.gz` 语义或另行 gzip。
+dump 需要明确 target database，按 `--database > DSN database > 失败` 决定，并只输出 custom `.dump` archive，默认在 `postgres.output_directory` 中生成带时间戳的文件。archive 已使用 PostgreSQL 原生内部压缩；不要使用 MySQL 的 `.sql.gz` 语义或另行 gzip。
 
 ## Restore
 
-restore 会修改目标数据库。只有目标 DSN、输入 archive 来源和写入授权均已明确时才能执行：
+restore 会修改目标数据库。只有 target database、输入 archive 来源和写入授权均已明确时才能执行；target 按 `--database > DSN database > 失败` 决定：
 
 ```bash
-dbtalk postgres restore --dsn-env DBTALK_APP_DSN --input ./data/app.dump
+dbtalk postgres restore --dsn-env DBTALK_APP_DSN --database app --input ./data/app.dump
 ```
 
 目标数据库必须已经存在。默认跳过 archive 中的 owner 和 ACL；需要保留时传入 `--preserve-owner`、`--preserve-privileges`。`--clean` 会删除目标对象，必须显式指定；`--if-exists` 只能与 `--clean` 一起使用。custom archive 可使用 `--jobs N` 并行恢复，`N` 必须为正整数。

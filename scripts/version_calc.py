@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""Derive the project version from Git history and optionally apply it.
+"""Derive the project version from Git history without applying it by default.
 
 Rules (x is fixed at 0):
   * y, z start at 0
   * a commit whose subject starts with "feat"  -> y += 1, z = 0
   * any other commit                           -> z += 1
 
-``--apply`` writes the resulting version to the static ``[project].version``
-field in ``pyproject.toml`` and refreshes ``uv.lock``.
+``--no-dry-run`` writes the resulting version to the static ``[project].version``
+field in ``pyproject.toml`` and ``dbtalk.__version__``, then refreshes
+``uv.lock``.
 
 Usage:
 
     uv run --locked --no-sync python scripts/version_calc.py
-    uv run --locked --no-sync python scripts/version_calc.py --quiet --apply
+    uv run --locked --no-sync python scripts/version_calc.py --quiet --no-dry-run
 """
 
 from __future__ import annotations
@@ -27,7 +28,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT_FILE = REPO_ROOT / "pyproject.toml"
 UV_LOCK_FILE = REPO_ROOT / "uv.lock"
+PACKAGE_VERSION_FILE = REPO_ROOT / "src" / "dbtalk" / "__init__.py"
 PROJECT_VERSION_RE = re.compile(rb"^(\s*version\s*=\s*\")([^\"]+)(\")")
+PACKAGE_VERSION_RE = re.compile(rb"^(\s*__version__\s*=\s*\")([^\"]+)(\")", re.MULTILINE)
 
 
 def run_git(*args: str) -> str:
@@ -116,16 +119,32 @@ def prepare_project_version_update(version: str) -> tuple[str, bytes]:
     return previous, updated
 
 
-def restore_version_files(pyproject: bytes, lock: bytes) -> None:
+def prepare_package_version_update(version: str) -> tuple[str, bytes]:
+    """Return the current CLI version and an updated package module body."""
+    raw = PACKAGE_VERSION_FILE.read_bytes()
+    match = PACKAGE_VERSION_RE.search(raw)
+    if match is None:
+        raise RuntimeError("could not find a static __version__ in src/dbtalk/__init__.py")
+
+    previous = match.group(2).decode("utf-8")
+    value_start, value_end = match.span(2)
+    updated = raw[:value_start] + version.encode("utf-8") + raw[value_end:]
+    return previous, updated
+
+
+def restore_version_files(pyproject: bytes, package_version: bytes, lock: bytes) -> None:
     """Restore version metadata after an unsuccessful uv lock refresh."""
     PYPROJECT_FILE.write_bytes(pyproject)
+    PACKAGE_VERSION_FILE.write_bytes(package_version)
     UV_LOCK_FILE.write_bytes(lock)
 
 
 def apply_version(version: str) -> None:
-    """Update pyproject.toml and refresh uv.lock as one operation."""
+    """Update package metadata and refresh uv.lock as one operation."""
     previous, updated_pyproject = prepare_project_version_update(version)
+    previous_package, updated_package = prepare_package_version_update(version)
     original_pyproject = PYPROJECT_FILE.read_bytes()
+    original_package = PACKAGE_VERSION_FILE.read_bytes()
     try:
         original_lock = UV_LOCK_FILE.read_bytes()
     except OSError as error:
@@ -134,15 +153,21 @@ def apply_version(version: str) -> None:
     try:
         if updated_pyproject != original_pyproject:
             PYPROJECT_FILE.write_bytes(updated_pyproject)
+        if updated_package != original_package:
+            PACKAGE_VERSION_FILE.write_bytes(updated_package)
         run_uv("lock")
     except (OSError, RuntimeError, subprocess.CalledProcessError):
-        restore_version_files(original_pyproject, original_lock)
+        restore_version_files(original_pyproject, original_package, original_lock)
         raise
 
     if previous == version:
         print(f"unchanged pyproject.toml -> project.version = {version!r}")
     else:
         print(f"updated pyproject.toml -> project.version {previous!r} -> {version!r}")
+    if previous_package == version:
+        print(f"unchanged src/dbtalk/__init__.py -> __version__ = {version!r}")
+    else:
+        print(f"updated src/dbtalk/__init__.py -> __version__ {previous_package!r} -> {version!r}")
     print("refreshed uv.lock")
 
 
@@ -150,7 +175,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Derive the dbtalk version from Git history")
     parser.add_argument(
-        "--apply", action="store_true", help="write pyproject.toml and refresh uv.lock"
+        "--no-dry-run",
+        dest="dry_run",
+        action="store_false",
+        help="write version metadata and refresh uv.lock",
     )
     parser.add_argument(
         "--quiet", action="store_true", help="do not print per-commit history lines"
@@ -165,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.quiet:
         print()
     print(f"version: {version}")
-    if args.apply:
+    if not args.dry_run:
         apply_version(version)
     return 0
 

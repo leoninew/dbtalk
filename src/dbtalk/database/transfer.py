@@ -133,6 +133,8 @@ def validate_connection(connection: TransferConnection) -> None:
         raise DatabaseTransferError(
             f"connection DSN dialect {parsed.dialect!r} does not match {connection.driver!r}"
         )
+    if not parsed.database:
+        raise DatabaseTransferError("JSONL database transfer requires a database name in the DSN")
 
 
 __all__ = [

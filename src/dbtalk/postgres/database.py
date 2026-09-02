@@ -114,6 +114,10 @@ def drop_database(parsed: ParsedDsn, name: str) -> None:
 
     _validate_management_dsn(parsed)
     _validate_database_name(name)
+    if parsed.database is None:
+        raise DatabaseOperationError(
+            "PostgreSQL database deletion requires a DSN connected to a maintenance database"
+        )
     if parsed.database == name:
         raise DatabaseOperationError(
             "PostgreSQL database deletion requires a DSN connected to a different "

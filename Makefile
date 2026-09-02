@@ -2,7 +2,6 @@
 
 UV ?= uv
 UV_RUN ?= $(UV) run --locked --no-sync
-VERSION_ARGS ?=
 DOCKER ?= docker
 IMAGE_NAME ?= dbtalk
 IMAGE_TAG ?= latest
@@ -42,7 +41,7 @@ help: ## Show available targets.
 	@echo "  install       Install the CLI and synchronize agent plugins"
 	@echo "  check         Run Ruff and Mypy quality checks (fix=1 enables fixes)"
 	@echo "  test          Run unit tests (cov=1 enables coverage reports)"
-	@echo "  version       Calculate or apply the Git-derived project version"
+	@echo "  version       Calculate the Git-derived version (apply=1 updates version files)"
 	@echo "  release       Build source and wheel distributions"
 	@echo "  binary        Build a standalone executable"
 	@echo "  release-image Build the runtime container image"
@@ -64,8 +63,12 @@ check: ## Run Ruff and Mypy checks without tests; use fix=1 to fix Ruff issues.
 test: ## Run unit tests; use cov=1 to collect coverage.
 	$(UV_RUN) pytest $(TEST_COV_ARGS)
 
-version: ## Calculate or apply the Git-derived project version.
-	$(UV_RUN) python scripts/version_calc.py $(VERSION_ARGS)
+version: ## Calculate the Git-derived project version; use apply=1 to update version files.
+ifeq ($(apply),1)
+	$(UV_RUN) python scripts/version_calc.py --no-dry-run
+else
+	$(UV_RUN) python scripts/version_calc.py
+endif
 
 release: ## Build source and wheel distributions.
 	$(UV) build

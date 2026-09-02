@@ -54,11 +54,12 @@ class MysqlDumpOptions:
 
 @dataclass(frozen=True)
 class MysqlDumpOverrides:
-    host: str | None
-    port: int | None
-    user: str | None
-    password: str | None
-    database: str | None
+    host: str
+    port: int
+    user: str
+    password: str
+    target_database: str | None
+    dsn_database: str | None
     output: Path | None
     archive: bool = False
     skip_definer: bool = False
@@ -131,16 +132,12 @@ def resolve_dump_options(
     config: MySQLDumpConfig,
     overrides: MysqlDumpOverrides,
 ) -> MysqlDumpOptions:
-    host = overrides.host if overrides.host is not None else config.host
-    port = overrides.port if overrides.port is not None else config.port
-    user = overrides.user if overrides.user is not None else config.user
-    password = overrides.password if overrides.password is not None else config.password
-    database = overrides.database if overrides.database is not None else config.database
+    database = overrides.target_database or overrides.dsn_database
     missing = [
         name
         for name, value in (
-            ("user", user),
-            ("password", password),
+            ("user", overrides.user),
+            ("password", overrides.password),
             ("database", database),
         )
         if not value
@@ -148,16 +145,17 @@ def resolve_dump_options(
     if missing:
         names = ", ".join(missing)
         raise click.ClickException(
-            f"Missing mysqldump configuration: {names}. "
-            "Set mysqldump values or pass the corresponding CLI options."
+            f"Missing MySQL dump values: {names}. Provide user and password in the DSN, "
+            "and provide the target database with --database or in the DSN."
         )
+    assert database is not None
 
     automatic_output = overrides.output is None or overrides.output.is_dir()
     return MysqlDumpOptions(
-        host=host,
-        port=port,
-        user=user,
-        password=password,
+        host=overrides.host,
+        port=overrides.port,
+        user=overrides.user,
+        password=overrides.password,
         database=database,
         output=(
             default_dump_output(

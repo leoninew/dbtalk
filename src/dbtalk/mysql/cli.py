@@ -69,6 +69,12 @@ mysql.add_command(permissions)
 @click.option("--dsn", "dsn_value", help="Complete MySQL SQLAlchemy-style DSN.")
 @click.option("--dsn-env", help="Environment variable containing the MySQL DSN.")
 @click.option(
+    "--database",
+    "target_database",
+    metavar="TARGET",
+    help="Database to dump. Defaults to the DSN database.",
+)
+@click.option(
     "--output",
     type=click.Path(path_type=Path),
     help=(
@@ -92,13 +98,14 @@ def dump_command(  # noqa: PLR0913 - Click passes one argument for each CLI opti
     ctx: click.Context,
     dsn_value: str | None,
     dsn_env: str | None,
+    target_database: str | None,
     output: Path | None,
     archive: bool,
     skip_definer: bool,
 ) -> None:
     """Export a MySQL database."""
     settings = context_settings(ctx)
-    host, port, user, password, database = mysql_connection_from_dsn(dsn_value, dsn_env)
+    host, port, user, password, dsn_database = mysql_connection_from_dsn(dsn_value, dsn_env)
     options = resolve_dump_options(
         settings.mysqldump,
         MysqlDumpOverrides(
@@ -106,7 +113,8 @@ def dump_command(  # noqa: PLR0913 - Click passes one argument for each CLI opti
             port=port,
             user=user,
             password=password,
-            database=database,
+            target_database=target_database,
+            dsn_database=dsn_database,
             output=output,
             archive=archive,
             skip_definer=skip_definer,
@@ -129,10 +137,7 @@ def dump_command(  # noqa: PLR0913 - Click passes one argument for each CLI opti
     "--database",
     "target_database",
     metavar="TARGET",
-    help=(
-        "Existing database to receive the dump. Defaults to mysqlrestore.database "
-        "or the DSN database."
-    ),
+    help=("Existing database to receive the dump. Defaults to the DSN database."),
 )
 @click.pass_context
 def restore_command(  # noqa: PLR0913 - Click passes one argument for each CLI option.
@@ -143,19 +148,17 @@ def restore_command(  # noqa: PLR0913 - Click passes one argument for each CLI o
     target_database: str | None,
 ) -> None:
     """Import a MySQL dump."""
-    settings = context_settings(ctx)
     host, port, user, password, dsn_database = mysql_connection_from_dsn(dsn_value, dsn_env)
     options = resolve_restore_options(
-        settings.mysqlrestore,
         MysqlRestoreOverrides(
             host=host,
             port=port,
             user=user,
             password=password,
             input=input,
-            database=target_database,
+            target_database=target_database,
             dsn_database=dsn_database,
-        ),
+        )
     )
     restored_input = restore_database(options)
     click.echo(f"MySQL dump restored from {restored_input}")
@@ -168,7 +171,7 @@ def context_settings(ctx: click.Context) -> Settings:
 def mysql_connection_from_dsn(
     dsn: str | None,
     dsn_env: str | None,
-) -> tuple[str, int, str, str, str]:
+) -> tuple[str, int, str, str, str | None]:
     """Resolve one explicit MySQL DSN into native client connection fields."""
 
     if (dsn is None) == (dsn_env is None):
@@ -182,6 +185,6 @@ def mysql_connection_from_dsn(
     host = parsed.host
     user = parsed.url.username
     database = parsed.database
-    if not host or not user or not database:
-        raise click.UsageError("MySQL DSN must include host, user, and database")
+    if not host or not user:
+        raise click.UsageError("MySQL DSN must include host and user")
     return host, parsed.port or 3306, user, parsed.url.password or "", database
