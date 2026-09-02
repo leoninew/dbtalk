@@ -1,14 +1,12 @@
 # Copy this file to backup_databases.yaml and fill in the DSNs.
 output_directory: ../data
 target_validation:
-  # Maximum query time for validating each enabled backup target.
-  query_timeout_seconds: 10
+  # Maximum database connection time for each configured connection.
+  connection_timeout_seconds: 10
 
 connections:
-  example:
-    engine: mysql
-    address: "<host>:3306"
+  - name: example
+    dsn: "mysql+pymysql://<user>:<password>@<host>:3306/"
     databases:
       - name: "<database>"
-        dsn: "mysql+pymysql://<user>:<password>@<host>:3306/<database>"
         enabled: false

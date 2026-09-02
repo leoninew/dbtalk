@@ -41,6 +41,7 @@ def query_from_environment(
     parameters: Mapping[str, object] | None = None,
     *,
     timeout_seconds: int,
+    connect_timeout_seconds: int | None = None,
 ) -> QueryResult:
     return query_from_dsn(
         None,
@@ -48,6 +49,7 @@ def query_from_environment(
         statement,
         parameters,
         timeout_seconds=timeout_seconds,
+        connect_timeout_seconds=connect_timeout_seconds,
     )
 
 
@@ -58,9 +60,14 @@ def query_from_dsn(
     parameters: Mapping[str, object] | None = None,
     *,
     timeout_seconds: int,
+    connect_timeout_seconds: int | None = None,
 ) -> QueryResult:
     parsed = _resolve_operation_dsn(dsn, environment_name)
-    with DatabaseClient(parsed, timeout_seconds=timeout_seconds) as client:
+    with DatabaseClient(
+        parsed,
+        timeout_seconds=timeout_seconds,
+        connect_timeout_seconds=connect_timeout_seconds,
+    ) as client:
         return client.query(statement, parameters)
 
 
@@ -70,6 +77,7 @@ def execute_from_environment(
     parameters: Mapping[str, object] | None = None,
     *,
     timeout_seconds: int,
+    connect_timeout_seconds: int | None = None,
     allow_write: bool = True,
 ) -> ExecutionResult:
     return execute_from_dsn(
@@ -78,6 +86,7 @@ def execute_from_environment(
         statement,
         parameters,
         timeout_seconds=timeout_seconds,
+        connect_timeout_seconds=connect_timeout_seconds,
         allow_write=allow_write,
     )
 
@@ -89,10 +98,15 @@ def execute_from_dsn(
     parameters: Mapping[str, object] | None = None,
     *,
     timeout_seconds: int,
+    connect_timeout_seconds: int | None = None,
     allow_write: bool = True,
 ) -> ExecutionResult:
     parsed = _resolve_operation_dsn(dsn, environment_name)
-    with DatabaseClient(parsed, timeout_seconds=timeout_seconds) as client:
+    with DatabaseClient(
+        parsed,
+        timeout_seconds=timeout_seconds,
+        connect_timeout_seconds=connect_timeout_seconds,
+    ) as client:
         return client.execute(statement, parameters, read_only=not allow_write)
 
 

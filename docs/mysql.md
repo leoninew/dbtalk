@@ -95,7 +95,7 @@ dump 和 restore 会在 stderr 输出 `started`、`progress`、`completed` 和 `
 
 ## 客户端与故障处理
 
-对于使用 `localhost` 或 `127.0.0.1` 的 DSN，若请求端口唯一对应一个运行中的 Docker 容器，dump 和 restore 都直接在该数据库容器中执行原生 MySQL 客户端，通过默认 Unix socket 连接，不经过 `host.docker.internal`。dump 完成后将制品复制到请求的宿主机路径，restore 通过 stdin 将输入流送入该容器。未识别到唯一映射容器时，才使用本机客户端；本机客户端也不可用时，只使用配置的本地 Docker image：
+对于使用 `localhost` 或 `127.0.0.1` 的 DSN，若请求端口唯一对应一个运行中的 Docker 容器，dump 和 restore 都直接在该数据库容器中执行原生 MySQL 客户端，通过默认 Unix socket 连接，不经过 `host.docker.internal`。dump 完成后将制品复制到请求的宿主机路径，restore 通过 stdin 将输入流送入该容器。未识别到唯一映射容器时，才使用本机客户端；本机客户端也不可用时，使用配置的 Docker image：
 
 ```yaml
 mysql:
@@ -104,7 +104,7 @@ mysql:
   zero_datetime_as_null: true
 ```
 
-可通过 `DBTALK_MYSQL__OUTPUT_DIRECTORY`、`DBTALK_MYSQL__CLIENT_IMAGE` 和 `DBTALK_MYSQL__ZERO_DATETIME_AS_NULL` 覆盖这些值。前两个值不提供连接、target 或恢复策略；host、port、user、password、database 始终来自本次 DSN 和可选的 `--database`。`zero_datetime_as_null` 只用于 JSONL `database export` 中 MySQL `DATE`、`DATETIME`、`TIMESTAMP` 的完整零日期：默认转为 JSON `null`，设为 `false` 时明确失败。image 必须已在本地存在，dbtalk 不会扫描其他 `mysql:*` image、拉取 image、创建数据库或猜测容器。
+可通过 `DBTALK_MYSQL__OUTPUT_DIRECTORY`、`DBTALK_MYSQL__CLIENT_IMAGE` 和 `DBTALK_MYSQL__ZERO_DATETIME_AS_NULL` 覆盖这些值。前两个值不提供连接、target 或恢复策略；host、port、user、password、database 始终来自本次 DSN 和可选的 `--database`。`zero_datetime_as_null` 只用于 JSONL `database export` 中 MySQL `DATE`、`DATETIME`、`TIMESTAMP` 的完整零日期：默认转为 JSON `null`，设为 `false` 时明确失败。配置 image 不在本地时，dbtalk 会打印 `docker pull` 日志并拉取该精确 image；不会扫描其他 `mysql:*` image、创建数据库或猜测容器。
 
 ## 用户与授权
 

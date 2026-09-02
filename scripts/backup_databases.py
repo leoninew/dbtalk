@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -15,16 +16,20 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal
 
 from dynaconf import Dynaconf
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL, make_url
+from sqlalchemy.exc import ArgumentError
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPOSITORY_ROOT = SCRIPT_DIR.parent
 DEFAULT_CONFIG_PATH = SCRIPT_DIR / "backup_databases.yaml"
 ENV_PREFIX = "DBTALK"
 Engine = Literal["mysql", "postgres"]
+DSN_CREDENTIALS_PATTERN = re.compile(
+    r"(?i)((?:mysql(?:\+pymysql)?|postgresql(?:\+psycopg)?):\/\/)[^@\s]+@"
+)
 
 
 @dataclass(frozen=True)
@@ -38,9 +43,16 @@ class BackupTarget:
 
 
 @dataclass(frozen=True)
+class BackupConnection:
+    name: str
+    dsn: str
+
+
+@dataclass(frozen=True)
 class BackupConfig:
     output_directory: Path
-    target_validation_query_timeout_seconds: int
+    target_validation_connection_timeout_seconds: int
+    connections: tuple[BackupConnection, ...]
     targets: tuple[BackupTarget, ...]
 
 
@@ -103,8 +115,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     test_parser = subparsers.add_parser(
         "test",
-        help="Test all DSNs declared in the selected backup configuration.",
-        description="Test all DSNs declared in the selected backup configuration.",
+        help="Test each configured database connection.",
+        description="Test each configured database connection.",
     )
     test_parser.add_argument(
         "--config",
@@ -118,12 +130,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="dbtalk executable or path (default: dbtalk).",
     )
     test_parser.add_argument(
-        "--timeout",
+        "--connect-timeout",
+        dest="connect_timeout_seconds",
         type=positive_integer,
         default=None,
         help=(
-            "Maximum target validation query time in seconds. "
-            "Overrides target_validation.query_timeout_seconds in the backup YAML."
+            "Maximum database connection time for each connection test in seconds. "
+            "Overrides target_validation.connection_timeout_seconds in the backup YAML."
         ),
     )
     return parser
@@ -135,6 +148,12 @@ def _mapping(value: object, context: str) -> dict[str, object]:
     return dict(value)
 
 
+def _list(value: object, context: str) -> list[object]:
+    if not isinstance(value, list):
+        raise BackupError(f"{context} must be a YAML list")
+    return value
+
+
 def _required_string(values: Mapping[str, object], key: str, context: str) -> str:
     value = values.get(key)
     if not isinstance(value, str) or not value.strip():
@@ -142,11 +161,42 @@ def _required_string(values: Mapping[str, object], key: str, context: str) -> st
     return value.strip()
 
 
-def _parse_engine(values: Mapping[str, object], context: str) -> Engine:
-    value = _required_string(values, "engine", context)
-    if value not in {"mysql", "postgres"}:
-        raise BackupError(f"{context}.engine must be mysql or postgres")
-    return cast(Engine, value)
+def _connection_url(values: Mapping[str, object], context: str) -> URL:
+    raw_dsn = _required_string(values, "dsn", context)
+    try:
+        url = make_url(raw_dsn)
+    except (ArgumentError, ValueError) as error:
+        raise BackupError(f"{context}.dsn must be a valid SQLAlchemy URL") from error
+    if url.database:
+        raise BackupError(f"{context}.dsn must not include a database name")
+    return url
+
+
+def _connection_engine(url: URL, context: str) -> Engine:
+    if url.drivername == "mysql+pymysql":
+        return "mysql"
+    if url.drivername == "postgresql+psycopg":
+        return "postgres"
+    raise BackupError(
+        f"{context}.dsn must use mysql+pymysql or postgresql+psycopg, got {url.drivername!r}"
+    )
+
+
+def _connection_address(url: URL) -> str:
+    host = url.host or "<unknown>"
+    return f"{host}:{url.port}" if url.port is not None else host
+
+
+def _target_dsn(url: URL, database: str) -> str:
+    return url.set(database=database).render_as_string(hide_password=False)
+
+
+def _subprocess_failure_detail(result: subprocess.CompletedProcess[str]) -> str:
+    detail = result.stderr.strip() or result.stdout.strip()
+    if not detail:
+        return ""
+    normalized = " ".join(detail.split())
+    return DSN_CREDENTIALS_PATTERN.sub(r"\1<redacted>@", normalized)[:1000]
 
 
 def _parse_enabled(values: Mapping[str, object], context: str) -> bool:
@@ -202,22 +252,30 @@ def load_backup_config(config_path: Path) -> BackupConfig:
         config.get("target_validation"),
         "config.target_validation",
     )
-    target_validation_query_timeout_seconds = _positive_config_integer(
-        target_validation_config.get("query_timeout_seconds"),
-        "config.target_validation.query_timeout_seconds",
+    target_validation_connection_timeout_seconds = _positive_config_integer(
+        target_validation_config.get("connection_timeout_seconds"),
+        "config.target_validation.connection_timeout_seconds",
     )
 
-    connections_value = config.get("connections")
-    connections = _mapping(connections_value, "config.connections")
+    connections = _list(config.get("connections"), "config.connections")
     if not connections:
         raise BackupError("config.connections must not be empty")
 
+    backup_connections: list[BackupConnection] = []
     targets: list[BackupTarget] = []
-    for connection_name, raw_connection in connections.items():
-        connection_context = f"config.connections.{connection_name}"
+    for connection_index, raw_connection in enumerate(connections, 1):
+        connection_context = f"config.connections[{connection_index}]"
         connection_config = _mapping(raw_connection, connection_context)
-        engine = _parse_engine(connection_config, connection_context)
-        address = _required_string(connection_config, "address", connection_context)
+        connection_name = _required_string(connection_config, "name", connection_context)
+        connection_url = _connection_url(connection_config, connection_context)
+        engine = _connection_engine(connection_url, connection_context)
+        address = _connection_address(connection_url)
+        backup_connections.append(
+            BackupConnection(
+                name=connection_name,
+                dsn=connection_url.render_as_string(hide_password=False),
+            )
+        )
         raw_databases = connection_config.get("databases")
         if not isinstance(raw_databases, list) or not raw_databases:
             raise BackupError(f"{connection_context}.databases must be a non-empty list")
@@ -225,13 +283,14 @@ def load_backup_config(config_path: Path) -> BackupConfig:
         for index, raw_database in enumerate(raw_databases, 1):
             database_context = f"{connection_context}.databases[{index}]"
             database_config = _mapping(raw_database, database_context)
+            database = _required_string(database_config, "name", database_context)
             targets.append(
                 BackupTarget(
                     engine=engine,
                     connection=address,
                     connection_name=connection_name,
-                    database=_required_string(database_config, "name", database_context),
-                    dsn=_required_string(database_config, "dsn", database_context),
+                    database=database,
+                    dsn=_target_dsn(connection_url, database),
                     enabled=_parse_enabled(database_config, database_context),
                 )
             )
@@ -241,7 +300,8 @@ def load_backup_config(config_path: Path) -> BackupConfig:
 
     return BackupConfig(
         output_directory=output_directory.resolve(),
-        target_validation_query_timeout_seconds=target_validation_query_timeout_seconds,
+        target_validation_connection_timeout_seconds=target_validation_connection_timeout_seconds,
+        connections=tuple(backup_connections),
         targets=tuple(targets),
     )
 
@@ -444,19 +504,21 @@ def run_dump(
         check=False,
     )
     if result.returncode != 0:
+        detail = _subprocess_failure_detail(result)
+        diagnostic = f" diagnostic={detail}" if detail else ""
         raise BackupError(
             "dbtalk dump failed "
             f"engine={target.engine} connection={target.connection} "
-            f"database={target.database} exit_code={result.returncode}"
+            f"database={target.database} exit_code={result.returncode}{diagnostic}"
         )
     if not destination.is_file() or destination.stat().st_size <= 0:
         raise BackupError(f"dbtalk dump produced no usable file: {destination.name}")
 
 
-def run_dsn_test(
+def run_connection_test(
     dbtalk: str,
     dsn: str,
-    timeout_seconds: int,
+    connection_timeout_seconds: int,
     environment: Mapping[str, str] | None = None,
 ) -> bool:
     dsn_env = "DBTALK_BACKUP_DSN"
@@ -467,8 +529,8 @@ def run_dsn_test(
         dsn_env,
         "--sql",
         "SELECT 1",
-        "--timeout",
-        str(timeout_seconds),
+        "--connect-timeout",
+        str(connection_timeout_seconds),
         "--format",
         "json",
     ]
@@ -634,59 +696,52 @@ def run_backups(args: argparse.Namespace) -> int:
 
 def run_tests(args: argparse.Namespace) -> int:
     backup_config = load_backup_config(args.config)
-    enabled_targets = tuple(target for target in backup_config.targets if target.enabled)
-    require_dsns(enabled_targets)
     dbtalk = resolve_command(args.dbtalk_command)
-    timeout_seconds = (
-        args.timeout
-        if args.timeout is not None
-        else backup_config.target_validation_query_timeout_seconds
+    connection_timeout_seconds = (
+        args.connect_timeout_seconds
+        if args.connect_timeout_seconds is not None
+        else backup_config.target_validation_connection_timeout_seconds
     )
 
-    total = len(enabled_targets)
+    total = len(backup_config.connections)
     passed = 0
-    logging.info("dsn test run started variables=%d timeout_seconds=%d", total, timeout_seconds)
-    for target in backup_config.targets:
-        if not target.enabled:
-            logging.info(
-                "dsn test skipped connection=%s database=%s enabled=%s",
-                target.connection_name,
-                target.database,
-                target.enabled,
-            )
-    for index, target in enumerate(enabled_targets, 1):
+    logging.info(
+        "connection test run started connections=%d connection_timeout_seconds=%d",
+        total,
+        connection_timeout_seconds,
+    )
+    for index, connection in enumerate(backup_config.connections, 1):
         logging.info(
-            "dsn test started index=%d/%d connection=%s database=%s",
+            "connection test started index=%d/%d connection=%s",
             index,
             total,
-            target.connection_name,
-            target.database,
+            connection.name,
         )
         started_at = time.perf_counter()
-        succeeded = run_dsn_test(dbtalk, target.dsn, timeout_seconds)
+        succeeded = run_connection_test(dbtalk, connection.dsn, connection_timeout_seconds)
         duration_seconds = time.perf_counter() - started_at
         if succeeded:
             passed += 1
             logging.info(
-                "dsn test passed index=%d/%d connection=%s database=%s duration_seconds=%.3f",
+                "connection test passed index=%d/%d connection=%s duration_seconds=%.3f",
                 index,
                 total,
-                target.connection_name,
-                target.database,
+                connection.name,
                 duration_seconds,
             )
         else:
             logging.error(
-                "dsn test failed index=%d/%d connection=%s database=%s duration_seconds=%.3f",
+                "connection test failed index=%d/%d connection=%s duration_seconds=%.3f",
                 index,
                 total,
-                target.connection_name,
-                target.database,
+                connection.name,
                 duration_seconds,
             )
 
     failed = total - passed
-    logging.info("dsn test run completed variables=%d passed=%d failed=%d", total, passed, failed)
+    logging.info(
+        "connection test run completed connections=%d passed=%d failed=%d", total, passed, failed
+    )
     return 0 if failed == 0 else 1
 
 

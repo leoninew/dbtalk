@@ -22,7 +22,7 @@ MySQL 与 PostgreSQL 的 dump/restore 都有两项跨调用的运行环境配置
 1. 从应用的 typed settings、官方配置样例、环境变量样例、测试和用户文档中删除 MySQL dump/restore 的连接与目标 database 配置。
 2. 采用跨引擎的共享 dump/restore 配置契约：MySQL 与 PostgreSQL 均使用 `DumpRestoreConfig(output_directory, client_image)` 的字段和校验。MySQL 的 `MySQLConfig` 在此基础上追加 MySQL 专用 `zero_datetime_as_null`；PostgreSQL 继续使用 `postgres.output_directory`、`postgres.client_image`。
 3. 删除整个 `mysqldump`、`mysqlrestore` 旧配置组及其 loader、类型和 `Settings` 字段；以一个参数化 loader 加载共享 dump/restore 字段，不再保留 `MySQLDumpConfig`、`MySQLRestoreConfig` 或 `PostgresConfig` 的重复定义。
-4. 令 MySQL Docker fallback 使用配置的精确 image，不再扫描或偏好本地 `mysql:*` images；不自动 pull image。
+4. 令 MySQL 与 PostgreSQL Docker fallback 使用配置的精确 image，不再扫描或偏好本地 `mysql:*` images；配置 image 不在本地时输出拉取日志并执行 `docker pull`。
 5. 删除仅服务于 MySQL dump/restore 的 opt-in 手工集成测试；行为由单元测试覆盖，不再为它维护连接或 target 输入。
 6. 不改变已确定的命令约束：MySQL dump/restore 的连接只来自 `--dsn` 或 `--dsn-env`，目标只来自 `--database` 或 DSN database。
 7. `database query` 与 `database exec` 的单条 SQL timeout 必须分别由 typed settings 管理，Python 源码不得为这些配置保留数值默认或平行常量；单次 CLI 显式输入可覆盖各自命令的设置。
@@ -43,8 +43,8 @@ MySQL 与 PostgreSQL 的 dump/restore 都有两项跨调用的运行环境配置
 | MySQL dump | `mysql dump --dsn-env APP_DSN`，可选 `--database` | 连接完全来自 `APP_DSN`；省略 `--database` 时只使用 DSN database 作为 target。`dbtalk.yaml` 不提供 host、user、password 或 database 回退。 |
 | MySQL restore | `mysql restore --dsn-env APP_DSN --input backup.sql`，可选 `--database` | 连接和目标解析与 dump 相同；不存在 `mysqlrestore` 配置组。 |
 | 默认 dump 输出 | 未提供 `--output` | 使用 `mysql.output_directory` 作为本地输出目录。 |
-| MySQL Docker fallback | 未命中已映射容器且本机没有 `mysqldump` / `mysql` | dump 和 restore 都只检查 `mysql.client_image` 是否已在本地存在；不扫描其他 `mysql:*` image，不自动 pull。 |
-| PostgreSQL Docker fallback | 未命中已映射容器且本机没有 `pg_dump` / `pg_restore` | dump 和 restore 都只检查 `postgres.client_image` 是否已在本地存在；不自动 pull。 |
+| MySQL Docker fallback | 未命中已映射容器且本机没有 `mysqldump` / `mysql` | dump 和 restore 都使用 `mysql.client_image`；本地缺失时输出拉取日志并拉取该精确 image，不扫描其他 `mysql:*` image。 |
+| PostgreSQL Docker fallback | 未命中已映射容器且本机没有 `pg_dump` / `pg_restore` | dump 和 restore 都使用 `postgres.client_image`；本地缺失时输出拉取日志并拉取该精确 image。 |
 | dump/restore 自动化覆盖 | 单元测试 | 覆盖 DSN 连接身份、`--database > DSN database > 失败`、无 target 错误、native command 构造和输出目录；不再维护手工 dump/restore 集成测试。 |
 
 ## Backup and restore parameter inventory
@@ -70,7 +70,7 @@ MySQL runtime 参数为 `MysqlDumpOptions(host, port, user, password, database, 
 | dump | `mysqldump [-C] [-h HOST] [-P PORT] -u USER -B DATABASE --no-create-db [--skip-definer] -R -E --set-gtid-purged=OFF --skip-lock-tables -r OUTPUT` |
 | restore | `mysql [-h HOST] [-P PORT] -u USER --database DATABASE < INPUT` |
 
-MySQL 密码仅通过 `MYSQL_PWD` 环境变量传递，不进入 argv。`--archive` 是 dbtalk 的本地压缩行为，不是 `mysqldump` 原生参数；gzip restore 会先解压到临时文件。restore 会拒绝 SQL 中的 `CREATE DATABASE` / `DROP DATABASE`，并将顶层 `USE` 重写为已解析的目标库。Docker fallback 在当前实现中自动选择本地 image；本任务将其替换为 `mysql.client_image` 的精确本地检查。
+MySQL 密码仅通过 `MYSQL_PWD` 环境变量传递，不进入 argv。`--archive` 是 dbtalk 的本地压缩行为，不是 `mysqldump` 原生参数；gzip restore 会先解压到临时文件。restore 会拒绝 SQL 中的 `CREATE DATABASE` / `DROP DATABASE`，并将顶层 `USE` 重写为已解析的目标库。Docker fallback 使用 `mysql.client_image` 的精确 image；本地缺失时输出 `docker pull` 日志并拉取该 image。
 
 ### PostgreSQL
 
@@ -102,7 +102,7 @@ PostgreSQL runtime 参数为 `PostgresDumpOptions(connection, output, client_ima
 | 配置类别 | MySQL | PostgreSQL | 结论 |
 | --- | --- | --- | --- |
 | 默认 dump 制品目录 | `mysql.output_directory` | `postgres.output_directory` | 两者都保留。它决定未传 `--output` 时的本地制品位置，不决定单次输出文件名。 |
-| Docker native client image | `mysql.client_image` | `postgres.client_image` | 两者都保留。它只在已映射容器和本机 client 均不可用时使用，必须是本地已存在的精确 image，不自动 pull。 |
+| Docker native client image | `mysql.client_image` | `postgres.client_image` | 两者都保留。它只在已映射容器和本机 client 均不可用时使用；本地缺失时输出拉取日志并拉取该精确 image。 |
 | JSONL 零日期规范化 | `mysql.zero_datetime_as_null` | 不适用 | 只由 MySQL export 的 `DATE`、`DATETIME`、`TIMESTAMP` 编码路径读取。 |
 | host、port、user、password、database | 不配置 | 不配置 | 全部来自每次调用的 DSN，database 还可由本次 `--database` 覆盖。 |
 | input / output 文件路径 | 不配置 | 不配置 | 属于本次备份或恢复的制品。 |
@@ -129,7 +129,7 @@ PostgreSQL runtime 参数为 `PostgresDumpOptions(connection, output, client_ima
 | `mysqldump.output_directory` | 迁移为 `mysql.output_directory` | 保留其默认制品目录职责，同时去除只覆盖 dump 的旧配置组名。 |
 | `mysqlrestore.*` | 删除整个组 | 连接和 target 无法作为配置；Docker client image 改由共享的 `mysql.client_image` 提供。 |
 | `mysql.output_directory` | 新增并保留 | 未传 dump `--output` 时的默认本地制品目录。 |
-| `mysql.client_image` | 新增并保留 | dump/restore Docker fallback 的精确本地 native client image。 |
+| `mysql.client_image` | 新增并保留 | dump/restore Docker fallback 的精确 native client image；本地缺失时拉取该 image。 |
 | `mysql.zero_datetime_as_null` | 迁移并保留 | MySQL JSONL export 对完整零日期的明确转换契约；不适用于 PostgreSQL 或 SQLite。 |
 | `verbose`、`logging.*` | 保留 | 全局诊断行为，与数据库连接无关。 |
 | `database.query_timeout_seconds` | 保留 | 是 `database query` 的默认单语句超时。 |
@@ -143,7 +143,7 @@ PostgreSQL runtime 参数为 `PostgresDumpOptions(connection, output, client_ima
 2. `MySQLDumpConfig`、`MySQLRestoreConfig`、`PostgresConfig`、`load_mysql_dump_config`、`load_mysql_restore_config`、`load_postgres_config`、`Settings.mysqldump` 和 `Settings.mysqlrestore` 被删除；应用运行不再读取任何旧 MySQL 组值。
 3. `dbtalk.yaml` 与 `.env.example` 公开 `mysql.output_directory`、`mysql.client_image`、`mysql.zero_datetime_as_null`，对应环境变量为 `DBTALK_MYSQL__OUTPUT_DIRECTORY`、`DBTALK_MYSQL__CLIENT_IMAGE`、`DBTALK_MYSQL__ZERO_DATETIME_AS_NULL`；不再公开 `DBTALK_DATABASE__ZERO_DATETIME_AS_NULL`、`DBTALK_MYSQLDUMP__*` 或 `DBTALK_MYSQLRESTORE__*`。
 4. `mysql dump` 和 `mysql restore` 的连接身份及 target 不受 YAML、dotenv 或进程环境中的已删除配置字段影响；它们继续只按 `--dsn` / `--dsn-env` 和 `--database > DSN database > 失败` 工作。
-5. 未命中已映射容器且本机 client 不可用时，dump 和 restore 都只检查并使用 `mysql.client_image` 指定的本地 image；不得扫描、选择或 pull 其他 `mysql:*` image。
+5. 未命中已映射容器且本机 client 不可用时，MySQL 与 PostgreSQL dump 和 restore 都使用各自的 configured image；本地缺失时输出拉取日志并 pull 该 image；不得扫描或选择其他 `mysql:*` image。
 6. `tests/test_settings.py`、`tests/test_unit_boundaries.py`、MySQL 与 PostgreSQL dump/restore 测试不再构造或断言已删除字段或重复配置类型；覆盖两个引擎的目录/image 配置覆盖、MySQL 零日期配置覆盖，以及各自 dump/restore 使用同一精确 fallback image。
 7. 删除 `tests/test_manual_integration.py`；不新增 `DBTALK_IT_MYSQL_DSN`、target database 环境变量或其他仅用于 dump/restore 的手工集成测试配置。
 8. 活跃用户文档和 CLI help 不再描述被删除的 MySQL dump/restore 配置；历史过程文档不为此改写。`plugins/dbtalk` 的同步不属于本任务。

@@ -14,7 +14,7 @@ Stage: Plan
 - 两个配置组的共享字段使用 `DumpRestoreConfig(output_directory, client_image)` 与参数化 loader；MySQL 的 `MySQLConfig` 在其上追加只供 MySQL JSONL export 使用的 `zero_datetime_as_null`。
 - MySQL 旧 `mysqldump`、`mysqlrestore` 组及所有 host、port、user、password、database 配置直接删除。新 MySQL group 为 `mysql`，默认 `client_image` 为 `mysql:8.0.39`，MySQL 零日期配置也归入该组。
 - PostgreSQL 保留既有 `postgres.output_directory` 与 `postgres.client_image` 的用户可见配置值和运行行为，仅复用 shared config type/loader。
-- MySQL 和 PostgreSQL Docker fallback 都保持 `mapped container -> local client -> configured local image` 的顺序；不扫描候选 image、不自动 pull image。
+- MySQL 和 PostgreSQL Docker fallback 都保持 `mapped container -> local client -> configured image` 的顺序；配置 image 不在本地时执行 `docker pull` 并将拉取日志输出到终端，不扫描候选 image。
 - 删除 dump/restore 手工集成测试，仅保留并补齐单元测试；不得以真实服务测试替代该约束，也不得修改已有数据库、用户或数据。
 - `plugins/dbtalk` 的同步不属于本任务；源码、配置样例、用户文档和测试先收敛，plugin 后续按用户指令单独同步。
 - query/exec 的单条 SQL timeout 分别进入根 `Settings`。MySQL 进度日志采样和 tooling 外部 CLI timeout 不进入应用设置。
@@ -44,7 +44,7 @@ Stage: Plan
    - 修改 `src/dbtalk/mysql/dump.py`，使 resolver 接收 `DumpRestoreConfig`，并把 `client_image` 传入 dump execution options；默认输出目录继续仅用于未传 `--output` 的 dump。
    - 修改 `src/dbtalk/mysql/restore.py`，让 restore resolver 或 runtime options 接收相同的 `client_image`，从而 restore 不再绕过 settings。
    - 修改 `src/dbtalk/mysql/cli.py`，dump 和 restore 都从 `Settings.mysql` 取得同一 config；DSN 与 `--database` 的连接/target 解析保持不变。
-   - 修改 `src/dbtalk/mysql/client.py`，将 `docker_mysql_image()` 改为接收期望 image 并以精确本地 inspect 校验，采用 PostgreSQL 同等的“没有 Docker / Docker 不可启动 / image 不存在”失败语义；删除 `mysql:*` 扫描、`mysql:latest` 偏好与“第一项”选择。
+   - 修改 `src/dbtalk/mysql/client.py`，将 `docker_mysql_image()` 改为接收期望 image 并以精确本地 inspect 校验；image 不存在时输出拉取日志并执行 `docker pull`，拉取失败时明确失败；删除 `mysql:*` 扫描、`mysql:latest` 偏好与“第一项”选择。
    - 保持 MySQL mapped container、本机 client、密码环境变量、SQL 预检、gzip 解压、进度日志和 native command vector 不变。
 
 3. 将 PostgreSQL 改为共享 config type，保持行为不变。
@@ -54,14 +54,14 @@ Stage: Plan
 
 4. 更新配置样例和用户文档。
    - 修改 `dbtalk.yaml` 与 `.env.example`：删除 `mysqldump` / `mysqlrestore` 以及所有连接字段，新增 `mysql.output_directory: data`、`mysql.client_image: mysql:8.0.39`、`mysql.zero_datetime_as_null: true` 和对应 `DBTALK_MYSQL__*` 环境变量；移除 `database.zero_datetime_as_null`。
-   - 修改 `docs/mysql.md`：将默认输出目录引用改为 `mysql.output_directory`，说明映射容器和本机 client 均不可用时只使用已存在的 `mysql.client_image`，不扫描或拉取其他 image；给出与 `postgres` 对称的配置示例。
+   - 修改 `docs/mysql.md`：将默认输出目录引用改为 `mysql.output_directory`，说明映射容器和本机 client 均不可用时使用 `mysql.client_image`，本地缺失时拉取该 image 并打印日志；不扫描其他 image；给出与 `postgres` 对称的配置示例。
    - 修改 `docs/postgres.md`：只在必要处表述共享的目录/image 配置契约，保留现有 PostgreSQL values、client compatibility 说明和命令示例。
    - 不修改历史 Requirement/Plan/Verification，也不修改 `plugins/dbtalk`。
 
 5. 重写受影响的单元测试并移除手工集成测试。
    - 修改 `tests/test_settings.py`：以 `mysql` / `postgres` 配置组构建样例，覆盖 YAML、dotenv、进程环境优先级、`mysql:8.0.39` 默认值、MySQL 零日期配置、共享 dump/restore base type，以及空目录/image 的拒绝。
    - 修改 `tests/test_unit_boundaries.py`：用参数化 loader 的错误边界替换旧 MySQL host/port 校验；测试 MySQL Docker image 的精确 inspect 成功与失败，不再测试 image 列表扫描或 `latest` 偏好。
-   - 修改 `tests/test_mysql.py`：用 `DumpRestoreConfig` 替换旧 config fixture；覆盖 dump、restore 均将 `mysql.client_image` 用于 Docker fallback，且不存在时失败而不选择其他本地 `mysql:*` image。
+   - 修改 `tests/test_mysql.py`：用 `DumpRestoreConfig` 替换旧 config fixture；覆盖 dump、restore 均将 `mysql.client_image` 用于 Docker fallback，本地缺失时拉取该 image，且不选择其他本地 `mysql:*` image。
    - 修改 `tests/test_postgres.py`：用 `DumpRestoreConfig` 替换 `PostgresConfig` 构造，保持 PostgreSQL dump/restore 行为断言。
    - 删除 `tests/test_manual_integration.py`；不添加新的 dump/restore 集成环境变量、数据库或用户。
 

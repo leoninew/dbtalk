@@ -28,7 +28,7 @@ MySQL 与 PostgreSQL URL 的末尾 database path 在语法上可省略，例如 
 
 ## Query / Exec
 
-SQL 使用 SQLAlchemy named bind 参数。参数格式为可重复的 `NAME=JSON_VALUE`，字符串需要使用 JSON 字符串表示。两个命令都有 `--timeout` / `-t`，单位为秒，只接受正整数。`query` 省略时使用 `database.query_timeout_seconds`，`exec` 省略时使用 `database.exec_timeout_seconds`，两者默认均为 `30`。超时仅针对当前单条语句。
+SQL 使用 SQLAlchemy named bind 参数。参数格式为可重复的 `NAME=JSON_VALUE`，字符串需要使用 JSON 字符串表示。两个命令都有 `--timeout` / `-t`，单位为秒，只接受正整数。`query` 省略时使用 `database.query_timeout_seconds`，`exec` 省略时使用 `database.exec_timeout_seconds`，两者默认均为 `30`。该 timeout 仅针对当前单条语句。需要限制建立 MySQL 或 PostgreSQL 连接的时间时，可在单次调用传入 `--connect-timeout SECONDS`；它不设置 SQL deadline，也没有全局默认值。
 
 ```bash
 uv run dbtalk query \

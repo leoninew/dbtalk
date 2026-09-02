@@ -283,13 +283,22 @@ def test_mysql_client_docker_image_check_and_cleanup() -> None:
         patch("dbtalk.mysql.client.shutil.which", return_value="docker"),
         patch(
             "dbtalk.mysql.client.subprocess.run",
-            return_value=subprocess.CompletedProcess([], 1, "", ""),
-        ),
+            side_effect=[
+                subprocess.CompletedProcess([], 1, "", ""),
+                subprocess.CompletedProcess([], 0, "", ""),
+            ],
+        ) as run,
+        patch("dbtalk.mysql.client.click.echo") as echo,
     ):
-        assert mysql_client.docker_mysql_image(image) == (
-            None,
-            f"Configured MySQL Docker image is not available locally: {image}.",
-        )
+        assert mysql_client.docker_mysql_image(image) == (image, "")
+    assert run.call_args_list == [
+        (
+            (["docker", "image", "inspect", image],),
+            {"check": False, "capture_output": True, "text": True},
+        ),
+        ((["docker", "pull", image],), {"check": False}),
+    ]
+    echo.assert_called_once_with(f"Pulling configured MySQL Docker image: {image}", err=True)
     with (
         patch("dbtalk.mysql.client.shutil.which", return_value="docker"),
         patch(
@@ -302,13 +311,19 @@ def test_mysql_client_docker_image_check_and_cleanup() -> None:
         patch("dbtalk.mysql.client.shutil.which", return_value="docker"),
         patch(
             "dbtalk.mysql.client.subprocess.run",
-            return_value=subprocess.CompletedProcess([], 1, "", ""),
-        ),
+            side_effect=[
+                subprocess.CompletedProcess([], 1, "", ""),
+                subprocess.CompletedProcess([], 1, "", ""),
+            ],
+        ) as run,
+        patch("dbtalk.mysql.client.click.echo") as echo,
     ):
         assert mysql_client.docker_mysql_image(image) == (
             None,
-            f"Configured MySQL Docker image is not available locally: {image}.",
+            f"Configured MySQL Docker image could not be pulled: {image}.",
         )
+    assert run.call_args.args[0] == ["docker", "pull", image]
+    echo.assert_called_once_with(f"Pulling configured MySQL Docker image: {image}", err=True)
     with patch("dbtalk.mysql.client.subprocess.run") as remove:
         mysql_client.remove_temporary_container("dbtalk-test", {"MYSQL_PWD": "secret"})
     remove.assert_called_once()

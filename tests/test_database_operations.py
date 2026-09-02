@@ -22,6 +22,7 @@ from dbtalk.database.connection import (
     AsyncDatabaseSession,
     DatabaseClient,
     DatabaseSession,
+    _engine_options,
     create_async_client,
     create_client,
 )
@@ -697,6 +698,16 @@ def test_sqlite_statement_timeout_interrupts_query_and_cleans_up(tmp_path: Path)
         with pytest.raises(DatabaseOperationError, match="query timed out"):
             client.query(slow_query)
         assert client.query("SELECT name FROM users WHERE id = 1").rows == (("Ada",),)
+
+
+def test_engine_options_keep_statement_and_connection_timeouts_separate() -> None:
+    mysql = parse_dsn("mysql+pymysql://user:password@host:3306/app")
+    postgres = parse_dsn("postgresql+psycopg://user:password@host:5432/app")
+
+    assert _engine_options(mysql, 30, 7) == {
+        "connect_args": {"read_timeout": 30, "write_timeout": 30, "connect_timeout": 7}
+    }
+    assert _engine_options(postgres, 30, 7) == {"connect_args": {"connect_timeout": 7}}
 
 
 def test_async_client_does_not_block_event_loop(tmp_path: Path) -> None:

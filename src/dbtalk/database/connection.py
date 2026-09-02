@@ -72,16 +72,27 @@ class DatabaseSession:
 class DatabaseClient:
     """Public synchronous database API backed by a SQLAlchemy engine."""
 
-    def __init__(self, dsn: str | URL | ParsedDsn, *, timeout_seconds: float | None = None) -> None:
+    def __init__(
+        self,
+        dsn: str | URL | ParsedDsn,
+        *,
+        timeout_seconds: float | None = None,
+        connect_timeout_seconds: float | None = None,
+    ) -> None:
         parsed = dsn if isinstance(dsn, ParsedDsn) else parse_dsn(_dsn_string(dsn))
         if parsed.async_mode:
             raise DatabaseOperationError("an async DSN cannot create a sync client")
         if timeout_seconds is not None and timeout_seconds <= 0:
             raise DatabaseOperationError("database timeout must be greater than zero")
+        if connect_timeout_seconds is not None and connect_timeout_seconds <= 0:
+            raise DatabaseOperationError("database connection timeout must be greater than zero")
         self.dsn = parsed
         self._timeout_seconds = timeout_seconds
         try:
-            self._engine = create_engine(parsed.url, **_engine_options(parsed, timeout_seconds))
+            self._engine = create_engine(
+                parsed.url,
+                **_engine_options(parsed, timeout_seconds, connect_timeout_seconds),
+            )
         except SQLAlchemyError as error:
             raise DatabaseOperationError("database engine could not be created") from error
 
@@ -346,17 +357,33 @@ def _sqlite_driver_connection(connection: Connection) -> Any:
 def _engine_options(
     parsed: ParsedDsn,
     timeout_seconds: float | None,
+    connect_timeout_seconds: float | None,
 ) -> dict[str, object]:
-    if parsed.dialect != "mysql" or timeout_seconds is None:
+    connect_args: dict[str, int] = {}
+    if parsed.dialect == "mysql" and timeout_seconds is not None:
+        statement_timeout = max(1, ceil(timeout_seconds))
+        connect_args["read_timeout"] = statement_timeout
+        connect_args["write_timeout"] = statement_timeout
+    if parsed.dialect in {"mysql", "postgresql"} and connect_timeout_seconds is not None:
+        connect_args["connect_timeout"] = max(1, ceil(connect_timeout_seconds))
+    if not connect_args:
         return {}
-    timeout = max(1, ceil(timeout_seconds))
-    return {"connect_args": {"read_timeout": timeout, "write_timeout": timeout}}
+    return {"connect_args": connect_args}
 
 
-def create_client(dsn: str | URL, *, timeout_seconds: float | None = None) -> DatabaseClient:
+def create_client(
+    dsn: str | URL,
+    *,
+    timeout_seconds: float | None = None,
+    connect_timeout_seconds: float | None = None,
+) -> DatabaseClient:
     """Create the public sync client from a DSN."""
 
-    return DatabaseClient(dsn, timeout_seconds=timeout_seconds)
+    return DatabaseClient(
+        dsn,
+        timeout_seconds=timeout_seconds,
+        connect_timeout_seconds=connect_timeout_seconds,
+    )
 
 
 def create_async_client(dsn: str | URL) -> AsyncDatabaseClient:

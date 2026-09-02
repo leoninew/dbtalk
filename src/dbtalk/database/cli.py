@@ -397,6 +397,13 @@ def import_command_arguments(options: dict[str, object]) -> ImportCommandArgumen
     help="Maximum statement time in seconds. Defaults to database.query_timeout_seconds.",
 )
 @click.option(
+    "--connect-timeout",
+    "connect_timeout_seconds",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Maximum database connection time in seconds.",
+)
+@click.option(
     "--param",
     "parameters",
     multiple=True,
@@ -416,6 +423,7 @@ def query_command(
     dsn_env: str | None,
     sql: str,
     timeout_seconds: int | None,
+    connect_timeout_seconds: int | None,
     parameters: tuple[str, ...],
     output_format: str,
 ) -> None:
@@ -428,6 +436,7 @@ def query_command(
             sql,
             parse_parameters(parameters),
             timeout_seconds=query_timeout_from_context(ctx, timeout_seconds),
+            connect_timeout_seconds=connect_timeout_seconds,
         )
         click.echo(render_query(result, output_format))
     except DatabaseTransferError as error:
@@ -449,6 +458,13 @@ def query_command(
     help="Maximum statement time in seconds. Defaults to database.exec_timeout_seconds.",
 )
 @click.option(
+    "--connect-timeout",
+    "connect_timeout_seconds",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Maximum database connection time in seconds.",
+)
+@click.option(
     "--write",
     "write_enabled",
     "-w",
@@ -468,6 +484,7 @@ def exec_command(
     dsn_env: str | None,
     sql: str,
     timeout_seconds: int | None,
+    connect_timeout_seconds: int | None,
     write_enabled: bool,
     parameters: tuple[str, ...],
 ) -> None:
@@ -480,6 +497,7 @@ def exec_command(
             sql,
             parse_parameters(parameters),
             timeout_seconds=exec_timeout_from_context(ctx, timeout_seconds),
+            connect_timeout_seconds=connect_timeout_seconds,
             allow_write=write_enabled,
         )
     except DatabaseTransferError as error:

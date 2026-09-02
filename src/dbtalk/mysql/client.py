@@ -94,7 +94,7 @@ def is_local_mysql_host(host: str) -> bool:
 
 
 def docker_mysql_image(image: str) -> tuple[str | None, str]:
-    """Return one configured local MySQL image without pulling it."""
+    """Return the configured MySQL image, pulling it when it is absent locally."""
     if shutil.which("docker") is None:
         return None, "Docker is not installed or is not on PATH."
 
@@ -108,8 +108,16 @@ def docker_mysql_image(image: str) -> tuple[str | None, str]:
     except OSError:
         return None, "Docker could not be started."
 
-    if result.returncode != 0:
-        return None, f"Configured MySQL Docker image is not available locally: {image}."
+    if result.returncode == 0:
+        return image, ""
+
+    click.echo(f"Pulling configured MySQL Docker image: {image}", err=True)
+    try:
+        pull_result = subprocess.run(["docker", "pull", image], check=False)
+    except OSError:
+        return None, "Docker could not be started."
+    if pull_result.returncode != 0:
+        return None, f"Configured MySQL Docker image could not be pulled: {image}."
     return image, ""
 
 

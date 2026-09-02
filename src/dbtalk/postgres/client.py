@@ -116,7 +116,7 @@ def docker_password_environment(connection: PostgresConnection) -> dict[str, str
 
 
 def docker_postgres_image(image: str) -> tuple[str | None, str]:
-    """Return a configured local PostgreSQL image, without pulling it."""
+    """Return the configured PostgreSQL image, pulling it when it is absent locally."""
 
     if shutil.which("docker") is None:
         return None, "Docker is not installed or is not on PATH."
@@ -129,8 +129,16 @@ def docker_postgres_image(image: str) -> tuple[str | None, str]:
         )
     except OSError:
         return None, "Docker could not be started."
-    if result.returncode != 0:
-        return None, f"Configured PostgreSQL Docker image is not available locally: {image}."
+    if result.returncode == 0:
+        return image, ""
+
+    click.echo(f"Pulling configured PostgreSQL Docker image: {image}", err=True)
+    try:
+        pull_result = subprocess.run(["docker", "pull", image], check=False)
+    except OSError:
+        return None, "Docker could not be started."
+    if pull_result.returncode != 0:
+        return None, f"Configured PostgreSQL Docker image could not be pulled: {image}."
     return image, ""
 
 

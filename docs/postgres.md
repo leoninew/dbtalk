@@ -32,7 +32,7 @@ export APP_DSN='postgresql+psycopg://backup:password@db.example.com:5432/app?ssl
 
 PostgreSQL URL 的 database path 在语法上可省略。`schema list/create`、role 和权限查看可使用这种 DSN；`schema drop` 必须带有维护 database 以避免删除当前连接数据库。dump/restore 的目标按 `--database > DSN database > 失败` 决定；grant/revoke 未显式给出 `--database` 或 `--schema` 时仍需要 DSN database。
 
-对于 `localhost` 或 `127.0.0.1`，若请求端口唯一对应一个运行中的 Docker PostgreSQL 容器，dump 和 restore 优先复用该容器：通过 `docker exec` 调用容器内 `pg_dump` / `pg_restore`，使用容器默认 Unix socket；dump 的 archive 通过临时文件和 `docker cp` 取回，restore 通过 `docker cp` 放入后导入并清理。未识别到唯一映射容器时，才优先使用本机 `pg_dump` / `pg_restore`；本机客户端缺失时使用本机 Docker 中已有的配置 image：
+对于 `localhost` 或 `127.0.0.1`，若请求端口唯一对应一个运行中的 Docker PostgreSQL 容器，dump 和 restore 优先复用该容器：通过 `docker exec` 调用容器内 `pg_dump` / `pg_restore`，使用容器默认 Unix socket；dump 的 archive 通过临时文件和 `docker cp` 取回，restore 通过 `docker cp` 放入后导入并清理。未识别到唯一映射容器时，才优先使用本机 `pg_dump` / `pg_restore`；本机客户端缺失时使用配置的 Docker image：
 
 ```yaml
 postgres:
@@ -40,7 +40,7 @@ postgres:
   client_image: postgres:18-alpine
 ```
 
-可用 `DBTALK_POSTGRES__CLIENT_IMAGE` 覆盖 image。不会安装客户端、拉取 image 或根据源库版本自动选择 tag。PostgreSQL 18+ 是当前支持基线；`pg_dump` client 必须不低于源服务端 major，恢复目标通常不应低于备份来源。
+可用 `DBTALK_POSTGRES__CLIENT_IMAGE` 覆盖 image。配置 image 不在本地时，dbtalk 会打印 `docker pull` 日志并拉取该精确 image；不会安装本机客户端或根据源库版本自动选择 tag。PostgreSQL 18+ 是当前支持基线；`pg_dump` client 必须不低于源服务端 major，恢复目标通常不应低于备份来源。
 
 `postgres` 与 `mysql` 使用同一类配置边界：只配置默认 dump 目录和 Docker client image；连接、target、制品文件路径与恢复策略仍由每次命令决定。可用 `DBTALK_POSTGRES__OUTPUT_DIRECTORY` 覆盖默认 dump 目录。
 

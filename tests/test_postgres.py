@@ -303,6 +303,46 @@ def test_docker_helpers_use_host_gateway_and_configured_image(
             "",
         )
 
+    image = "registry.example/postgres:18"
+    with (
+        patch("dbtalk.postgres.client.shutil.which", return_value="docker"),
+        patch(
+            "dbtalk.postgres.client.subprocess.run",
+            side_effect=[
+                CompletedProcess([], 1, "", ""),
+                CompletedProcess([], 0, "", ""),
+            ],
+        ) as run,
+        patch("dbtalk.postgres.client.click.echo") as echo,
+    ):
+        assert docker_postgres_image(image) == (image, "")
+    assert run.call_args_list == [
+        (
+            (["docker", "image", "inspect", image],),
+            {"check": False, "capture_output": True, "text": True},
+        ),
+        ((["docker", "pull", image],), {"check": False}),
+    ]
+    echo.assert_called_once_with(f"Pulling configured PostgreSQL Docker image: {image}", err=True)
+
+    with (
+        patch("dbtalk.postgres.client.shutil.which", return_value="docker"),
+        patch(
+            "dbtalk.postgres.client.subprocess.run",
+            side_effect=[
+                CompletedProcess([], 1, "", ""),
+                CompletedProcess([], 1, "", ""),
+            ],
+        ) as run,
+        patch("dbtalk.postgres.client.click.echo") as echo,
+    ):
+        assert docker_postgres_image(image) == (
+            None,
+            f"Configured PostgreSQL Docker image could not be pulled: {image}.",
+        )
+    assert run.call_args.args[0] == ["docker", "pull", image]
+    echo.assert_called_once_with(f"Pulling configured PostgreSQL Docker image: {image}", err=True)
+
     assert docker_host_gateway_args("db.example.test") == []
 
 
