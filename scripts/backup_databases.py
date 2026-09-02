@@ -35,7 +35,6 @@ class BackupTarget:
     database: str
     dsn: str
     enabled: bool
-    output_label: str
 
 
 @dataclass(frozen=True)
@@ -87,13 +86,6 @@ def build_parser() -> argparse.ArgumentParser:
     backup_parser.set_defaults(
         config=DEFAULT_CONFIG_PATH,
         dbtalk_command="dbtalk",
-        dry_run=True,
-    )
-    backup_parser.add_argument(
-        "--no-dry-run",
-        dest="dry_run",
-        action="store_false",
-        help="Execute the configured dumps and write the backup manifest.",
     )
     backup_parser.add_argument(
         "-c",
@@ -230,7 +222,6 @@ def load_backup_config(config_path: Path) -> BackupConfig:
         if not isinstance(raw_databases, list) or not raw_databases:
             raise BackupError(f"{connection_context}.databases must be a non-empty list")
 
-        output_label = "-".join((engine, safe_component(connection_name), safe_component(address)))
         for index, raw_database in enumerate(raw_databases, 1):
             database_context = f"{connection_context}.databases[{index}]"
             database_config = _mapping(raw_database, database_context)
@@ -242,7 +233,6 @@ def load_backup_config(config_path: Path) -> BackupConfig:
                     database=_required_string(database_config, "name", database_context),
                     dsn=_required_string(database_config, "dsn", database_context),
                     enabled=_parse_enabled(database_config, database_context),
-                    output_label=output_label,
                 )
             )
 
@@ -312,13 +302,13 @@ def batch_directory(output_directory: Path, batch_timestamp: str) -> Path:
 
 def output_filename(target: BackupTarget) -> str:
     extension = ".dump" if target.engine == "postgres" else ".sql.gz"
-    stem = "-".join((target.output_label, safe_component(target.database)))
+    stem = "-".join((safe_component(target.connection_name), safe_component(target.database)))
     return f"{stem}{extension}"
 
 
 def output_path(target: BackupTarget, output_directory: Path) -> Path:
     extension = ".dump" if target.engine == "postgres" else ".sql.gz"
-    stem = "-".join((target.output_label, safe_component(target.database)))
+    stem = "-".join((safe_component(target.connection_name), safe_component(target.database)))
     filename = output_filename(target)
     candidate = output_directory / filename
     sequence = 1
@@ -501,8 +491,6 @@ def run_backups(args: argparse.Namespace) -> int:
     batch_timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     resume_directory = getattr(args, "resume", None)
     if resume_directory is not None:
-        if args.dry_run:
-            raise BackupError("--resume requires --no-dry-run")
         batch_output_directory = resume_directory.expanduser().resolve()
         if not batch_output_directory.is_dir():
             raise BackupError(f"resume directory does not exist: {batch_output_directory}")
@@ -521,11 +509,10 @@ def run_backups(args: argparse.Namespace) -> int:
 
     dbtalk = None
     enabled_targets = tuple(target for target in backup_config.targets if target.enabled)
-    if not args.dry_run:
-        if not args.continue_on_error:
-            require_dsns(enabled_targets)
-        dbtalk = resolve_command(args.dbtalk_command)
-        batch_output_directory.mkdir(parents=True, exist_ok=True)
+    if not args.continue_on_error:
+        require_dsns(enabled_targets)
+    dbtalk = resolve_command(args.dbtalk_command)
+    batch_output_directory.mkdir(parents=True, exist_ok=True)
 
     results: list[BackupArtifact | BackupFailure] = []
     for index, target in enumerate(backup_config.targets, 1):
@@ -561,8 +548,6 @@ def run_backups(args: argparse.Namespace) -> int:
                 target.database,
                 target.enabled,
             )
-            continue
-        if args.dry_run:
             continue
 
         if reusable_backup is not None:
@@ -628,25 +613,22 @@ def run_backups(args: argparse.Namespace) -> int:
             duration_seconds,
         )
 
-    if args.dry_run:
-        logging.info("dry run completed targets=%d", total)
-    else:
-        manifest = write_manifest(
-            args.config.expanduser().resolve(),
-            results,
-            batch_output_directory,
-            batch_timestamp,
-            replace_existing=resume_directory is not None,
-        )
-        successful_backups = sum(isinstance(result, BackupArtifact) for result in results)
-        failed_backups = len(results) - successful_backups
-        logging.info("backup manifest written path=%s", manifest)
-        logging.info(
-            "backup run completed targets=%d succeeded=%d failed=%d",
-            total,
-            successful_backups,
-            failed_backups,
-        )
+    manifest = write_manifest(
+        args.config.expanduser().resolve(),
+        results,
+        batch_output_directory,
+        batch_timestamp,
+        replace_existing=resume_directory is not None,
+    )
+    successful_backups = sum(isinstance(result, BackupArtifact) for result in results)
+    failed_backups = len(results) - successful_backups
+    logging.info("backup manifest written path=%s", manifest)
+    logging.info(
+        "backup run completed targets=%d succeeded=%d failed=%d",
+        total,
+        successful_backups,
+        failed_backups,
+    )
     return 0 if not any(isinstance(result, BackupFailure) for result in results) else 1
 
 
