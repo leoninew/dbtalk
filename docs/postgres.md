@@ -37,10 +37,12 @@ PostgreSQL URL 的 database path 在语法上可省略。`schema list/create`、
 ```yaml
 postgres:
   output_directory: data
-  client_image: postgres:18
+  client_image: postgres:18-alpine
 ```
 
 可用 `DBTALK_POSTGRES__CLIENT_IMAGE` 覆盖 image。不会安装客户端、拉取 image 或根据源库版本自动选择 tag。PostgreSQL 18+ 是当前支持基线；`pg_dump` client 必须不低于源服务端 major，恢复目标通常不应低于备份来源。
+
+`postgres` 与 `mysql` 使用同一类配置边界：只配置默认 dump 目录和 Docker client image；连接、target、制品文件路径与恢复策略仍由每次命令决定。可用 `DBTALK_POSTGRES__OUTPUT_DIRECTORY` 覆盖默认 dump 目录。
 
 ## Schema management
 

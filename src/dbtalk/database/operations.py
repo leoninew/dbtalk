@@ -11,8 +11,6 @@ from typing import Any
 
 from tabulate import tabulate
 
-from dbtalk.settings import DEFAULT_OPERATION_TIMEOUT_SECONDS
-
 from .connection import DatabaseClient
 from .dsn import ParsedDsn, dsn_from_environment, parse_dsn
 from .models import DatabaseOperationError, ExecutionResult, QueryResult
@@ -42,7 +40,7 @@ def query_from_environment(
     statement: str,
     parameters: Mapping[str, object] | None = None,
     *,
-    timeout_seconds: int = DEFAULT_OPERATION_TIMEOUT_SECONDS,
+    timeout_seconds: int,
 ) -> QueryResult:
     return query_from_dsn(
         None,
@@ -59,7 +57,7 @@ def query_from_dsn(
     statement: str,
     parameters: Mapping[str, object] | None = None,
     *,
-    timeout_seconds: int = DEFAULT_OPERATION_TIMEOUT_SECONDS,
+    timeout_seconds: int,
 ) -> QueryResult:
     parsed = _resolve_operation_dsn(dsn, environment_name)
     with DatabaseClient(parsed, timeout_seconds=timeout_seconds) as client:
@@ -71,7 +69,7 @@ def execute_from_environment(
     statement: str,
     parameters: Mapping[str, object] | None = None,
     *,
-    timeout_seconds: int = DEFAULT_OPERATION_TIMEOUT_SECONDS,
+    timeout_seconds: int,
     allow_write: bool = True,
 ) -> ExecutionResult:
     return execute_from_dsn(
@@ -90,7 +88,7 @@ def execute_from_dsn(
     statement: str,
     parameters: Mapping[str, object] | None = None,
     *,
-    timeout_seconds: int = DEFAULT_OPERATION_TIMEOUT_SECONDS,
+    timeout_seconds: int,
     allow_write: bool = True,
 ) -> ExecutionResult:
     parsed = _resolve_operation_dsn(dsn, environment_name)
@@ -159,7 +157,6 @@ def json_default(value: object) -> Any:
 
 
 __all__ = [
-    "DEFAULT_OPERATION_TIMEOUT_SECONDS",
     "execute_from_dsn",
     "execute_from_environment",
     "json_default",

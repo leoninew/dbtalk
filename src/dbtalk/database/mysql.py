@@ -32,7 +32,7 @@ def _normalize_mysql_zero_date(value: object, declared_type: str, options: Expor
     if options.zero_datetime_as_null:
         return None
     raise DatabaseTransferError(
-        "MySQL zero date cannot be exported while database.zero_datetime_as_null is disabled"
+        "MySQL zero date cannot be exported while mysql.zero_datetime_as_null is disabled"
     )
 
 

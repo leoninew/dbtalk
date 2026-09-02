@@ -397,10 +397,16 @@ def test_canonical_dsn_transfer_validation_and_environment(tmp_path: Path) -> No
     try:
         monkeypatch.setenv("DBTALK_CANONICAL_DSN", dsn)
         assert dsn_from_environment("DBTALK_CANONICAL_DSN").dialect == "sqlite"
-        assert query_from_environment("DBTALK_CANONICAL_DSN", "SELECT 1").rows == ((1,),)
+        assert query_from_environment(
+            "DBTALK_CANONICAL_DSN",
+            "SELECT 1",
+            timeout_seconds=30,
+        ).rows == ((1,),)
         assert (
             execute_from_environment(
-                "DBTALK_CANONICAL_DSN", "CREATE TABLE another (id INTEGER)"
+                "DBTALK_CANONICAL_DSN",
+                "CREATE TABLE another (id INTEGER)",
+                timeout_seconds=30,
             ).row_count
             == 0
         )

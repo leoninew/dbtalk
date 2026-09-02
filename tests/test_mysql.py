@@ -28,7 +28,7 @@ from dbtalk.mysql.cli import (
     restore_database,
 )
 from dbtalk.mysql.client import docker_mapped_mysql_container
-from dbtalk.settings import MySQLDumpConfig
+from dbtalk.settings import DumpRestoreConfig
 
 
 class MysqlCommandTests(unittest.TestCase):
@@ -91,6 +91,7 @@ class MysqlCommandTests(unittest.TestCase):
             database="example",
             output=Path("backup.sql"),
             skip_definer=True,
+            client_image="mysql:8.0.39",
         )
 
         def write_dump(
@@ -147,6 +148,7 @@ class MysqlCommandTests(unittest.TestCase):
             database="example",
             output=Path("backup.sql"),
             skip_definer=True,
+            client_image="mysql:8.0.39",
         )
         success = CompletedProcess([], 0, "", "")
 
@@ -164,8 +166,8 @@ class MysqlCommandTests(unittest.TestCase):
             patch("dbtalk.mysql.dump.docker_mapped_mysql_container", return_value=None),
             patch(
                 "dbtalk.mysql.dump.docker_mysql_image",
-                return_value=("mysql:8.4", ""),
-            ),
+                return_value=("mysql:8.0.39", ""),
+            ) as image,
             patch(
                 "dbtalk.mysql.dump.run_command",
                 side_effect=run_docker,
@@ -175,9 +177,10 @@ class MysqlCommandTests(unittest.TestCase):
             output = dump_database(options)
 
         self.assertEqual(output, Path("backup.sql").resolve())
+        image.assert_called_once_with("mysql:8.0.39")
         docker_run = run.call_args_list[0].args[0]
         self.assertEqual(docker_run[:3], ["docker", "run", "--name"])
-        self.assertIn("mysql:8.4", docker_run)
+        self.assertIn("mysql:8.0.39", docker_run)
         self.assertIn("host.docker.internal", docker_run)
         self.assertNotIn("-C", docker_run)
         self.assertIn("--skip-definer", docker_run)
@@ -239,6 +242,7 @@ class MysqlCommandTests(unittest.TestCase):
             password="secret",
             database="example",
             output=Path("backup.sql"),
+            client_image="mysql:8.0.39",
             skip_definer=True,
         )
         success = CompletedProcess([], 0, "", "")
@@ -432,13 +436,9 @@ class MysqlCommandTests(unittest.TestCase):
             )
 
     def test_explicit_dump_directory_uses_timestamped_default_name(self) -> None:
-        config = MySQLDumpConfig(
-            host="localhost",
-            port=3306,
-            user="root",
-            password="secret",
-            database="example",
+        config = DumpRestoreConfig(
             output_directory="data",
+            client_image="mysql:8.0.39",
         )
         runner = CliRunner()
 
@@ -631,13 +631,9 @@ class MysqlCommandTests(unittest.TestCase):
             self.assertFalse(Path("backup.sql").exists())
 
     def test_resolve_dump_options_uses_dsn_values_and_target_precedence(self) -> None:
-        config = MySQLDumpConfig(
-            host="db.example.test",
-            port=3307,
-            user="backup",
-            password="test-password",
-            database="app",
+        config = DumpRestoreConfig(
             output_directory="backups/mysql",
+            client_image="registry.example/mysql:8.0.39",
         )
         runner = CliRunner()
 
@@ -673,6 +669,7 @@ class MysqlCommandTests(unittest.TestCase):
             self.assertEqual(configured.user, "dsn-user")
             self.assertEqual(configured.password, "dsn-password")
             self.assertEqual(configured.database, "dsn_database")
+            self.assertEqual(configured.client_image, "registry.example/mysql:8.0.39")
             self.assertTrue(configured.output.parent.is_dir())
             self.assertEqual(configured.output.parent, Path.cwd() / "backups" / "mysql")
             self.assertTrue(configured.output.name.startswith("dsn_database-"))
@@ -686,13 +683,9 @@ class MysqlCommandTests(unittest.TestCase):
         self.assertTrue(overridden.skip_definer)
 
     def test_resolve_dump_options_rejects_missing_credentials(self) -> None:
-        config = MySQLDumpConfig(
-            host="localhost",
-            port=3306,
-            user="configured-user",
-            password="configured-password",
-            database="configured_database",
+        config = DumpRestoreConfig(
             output_directory="data",
+            client_image="mysql:8.0.39",
         )
 
         with self.assertRaisesRegex(
@@ -764,6 +757,7 @@ class MysqlCommandTests(unittest.TestCase):
                 password="secret",
                 input=input_path,
                 database="target_database",
+                client_image="mysql:8.0.39",
             )
             with (
                 patch(
@@ -814,6 +808,7 @@ class MysqlCommandTests(unittest.TestCase):
                 password="secret",
                 input=input_path,
                 database="target_database",
+                client_image="mysql:8.0.39",
             )
             captured_input: Path | None = None
 
@@ -1004,6 +999,7 @@ class MysqlCommandTests(unittest.TestCase):
                 password="secret",
                 input=input_path,
                 database="target_database",
+                client_image="mysql:8.0.39",
             )
             success = CompletedProcess([], 0, "", "")
 
@@ -1111,6 +1107,7 @@ class MysqlCommandTests(unittest.TestCase):
                 password="secret",
                 input=input_path,
                 database="target_database",
+                client_image="mysql:8.0.39",
             )
             success = CompletedProcess([], 0, "", "")
 
@@ -1119,8 +1116,8 @@ class MysqlCommandTests(unittest.TestCase):
                 patch("dbtalk.mysql.restore.docker_mapped_mysql_container", return_value=None),
                 patch(
                     "dbtalk.mysql.restore.docker_mysql_image",
-                    return_value=("mysql:8.4", ""),
-                ),
+                    return_value=("mysql:8.0.39", ""),
+                ) as image,
                 patch(
                     "dbtalk.mysql.restore.run_command",
                     return_value=success,
@@ -1130,11 +1127,12 @@ class MysqlCommandTests(unittest.TestCase):
                 restored_input = restore_database(options)
 
             self.assertEqual(restored_input, input_path.resolve())
+            image.assert_called_once_with("mysql:8.0.39")
             probe_command = run.call_args_list[0].args[0]
             self.assertEqual(probe_command[:3], ["docker", "run", "--rm"])
             docker_run = run.call_args_list[1].args[0]
             self.assertEqual(docker_run[:5], ["docker", "run", "-i", "--name", ANY])
-            self.assertIn("mysql:8.4", docker_run)
+            self.assertIn("mysql:8.0.39", docker_run)
             self.assertIn("host.docker.internal", docker_run)
             self.assertIn("target_database", docker_run)
             self.assertNotIn("secret", docker_run)
@@ -1158,6 +1156,7 @@ class MysqlCommandTests(unittest.TestCase):
                 password="secret",
                 input=input_path,
                 database="target_database",
+                client_image="mysql:8.0.39",
             )
 
             message = "mysql is not available. Docker is not installed or is not on PATH."
@@ -1192,6 +1191,7 @@ class MysqlCommandTests(unittest.TestCase):
 
     def test_resolve_restore_options_uses_dsn_values_and_target_precedence(self) -> None:
         options = resolve_restore_options(
+            DumpRestoreConfig(output_directory="data", client_image="mysql:8.0.39"),
             MysqlRestoreOverrides(
                 host="dsn.example.test",
                 port=3308,
@@ -1200,7 +1200,7 @@ class MysqlCommandTests(unittest.TestCase):
                 input=Path("backup.sql"),
                 target_database="target_database",
                 dsn_database="dsn_database",
-            )
+            ),
         )
 
         self.assertEqual(options.host, "dsn.example.test")
@@ -1209,9 +1209,11 @@ class MysqlCommandTests(unittest.TestCase):
         self.assertEqual(options.password, "dsn-password")
         self.assertEqual(options.database, "target_database")
         self.assertEqual(options.input, Path("backup.sql"))
+        self.assertEqual(options.client_image, "mysql:8.0.39")
 
     def test_resolve_restore_options_falls_back_to_dsn_database(self) -> None:
         options = resolve_restore_options(
+            DumpRestoreConfig(output_directory="data", client_image="mysql:8.0.39"),
             MysqlRestoreOverrides(
                 host="dsn.example.test",
                 port=3306,
@@ -1220,7 +1222,7 @@ class MysqlCommandTests(unittest.TestCase):
                 input=Path("backup.sql"),
                 target_database=None,
                 dsn_database="dsn_database",
-            )
+            ),
         )
 
         self.assertEqual(options.database, "dsn_database")
@@ -1228,6 +1230,7 @@ class MysqlCommandTests(unittest.TestCase):
     def test_resolve_restore_options_requires_a_target_database(self) -> None:
         with self.assertRaisesRegex(click.ClickException, "Missing MySQL restore values: database"):
             resolve_restore_options(
+                DumpRestoreConfig(output_directory="data", client_image="mysql:8.0.39"),
                 MysqlRestoreOverrides(
                     host="dsn.example.test",
                     port=3306,
@@ -1236,7 +1239,7 @@ class MysqlCommandTests(unittest.TestCase):
                     input=Path("backup.sql"),
                     target_database=None,
                     dsn_database=None,
-                )
+                ),
             )
 
     def test_cli_dump_uses_an_explicit_target_for_a_database_free_dsn(self) -> None:

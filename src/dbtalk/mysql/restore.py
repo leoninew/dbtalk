@@ -16,6 +16,8 @@ from pathlib import Path
 
 import click
 
+from dbtalk.settings import DumpRestoreConfig
+
 from .client import (
     docker_database_host,
     docker_host_gateway_args,
@@ -185,6 +187,7 @@ class MysqlRestoreOptions:
     password: str
     input: Path
     database: str | None = None
+    client_image: str = ""
 
 
 @dataclass(frozen=True)
@@ -224,7 +227,10 @@ def generate_restore_command(options: MysqlRestoreOptions) -> str:
     return f"{command} < {shlex.quote(str(options.input))}"
 
 
-def resolve_restore_options(overrides: MysqlRestoreOverrides) -> MysqlRestoreOptions:
+def resolve_restore_options(
+    config: DumpRestoreConfig,
+    overrides: MysqlRestoreOverrides,
+) -> MysqlRestoreOptions:
     database = overrides.target_database or overrides.dsn_database
     missing = [
         name
@@ -251,6 +257,7 @@ def resolve_restore_options(overrides: MysqlRestoreOverrides) -> MysqlRestoreOpt
         password=overrides.password,
         input=overrides.input,
         database=database,
+        client_image=config.client_image,
     )
 
 
@@ -312,7 +319,7 @@ def restore_database(options: MysqlRestoreOptions) -> Path:
                 stage = "restore"
                 restore_with_local_client(options, restore_input, progress_callback=report_progress)
             else:
-                image, reason = docker_mysql_image()
+                image, reason = docker_mysql_image(options.client_image)
                 if image is None:
                     raise click.ClickException(f"mysql is not available. {reason}")
                 verify_target_database_with_docker(options, image)
@@ -459,6 +466,7 @@ def restore_with_docker(
         password=options.password,
         input=input_path,
         database=options.database,
+        client_image=options.client_image,
     )
     command = ["docker", "run", "-i", "--name", container_name]
     command.extend(docker_host_gateway_args(options.host))
@@ -527,6 +535,7 @@ def verify_target_database_with_docker(options: MysqlRestoreOptions, image: str)
         password=options.password,
         input=options.input,
         database=options.database,
+        client_image=options.client_image,
     )
     command = ["docker", "run", "--rm"]
     command.extend(docker_host_gateway_args(options.host))

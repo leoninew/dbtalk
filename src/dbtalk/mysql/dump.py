@@ -15,7 +15,7 @@ from pathlib import Path
 
 import click
 
-from dbtalk.settings import MySQLDumpConfig
+from dbtalk.settings import DumpRestoreConfig
 
 from .client import (
     docker_database_host,
@@ -50,6 +50,7 @@ class MysqlDumpOptions:
     archive: bool = False
     skip_definer: bool = False
     automatic_output: bool = False
+    client_image: str = ""
 
 
 @dataclass(frozen=True)
@@ -129,7 +130,7 @@ def default_dump_output(
 
 
 def resolve_dump_options(
-    config: MySQLDumpConfig,
+    config: DumpRestoreConfig,
     overrides: MysqlDumpOverrides,
 ) -> MysqlDumpOptions:
     database = overrides.target_database or overrides.dsn_database
@@ -171,6 +172,7 @@ def resolve_dump_options(
         archive=overrides.archive,
         skip_definer=overrides.skip_definer,
         automatic_output=automatic_output,
+        client_image=config.client_image,
     )
 
 
@@ -280,7 +282,7 @@ def dump_database_file(
         dump_with_local_client(options, output, progress_callback=progress_callback)
         return
 
-    image, reason = docker_mysql_image()
+    image, reason = docker_mysql_image(options.client_image)
     if image is None:
         raise click.ClickException(f"mysqldump is not available. {reason}")
 
@@ -351,6 +353,7 @@ def dump_with_docker(
         output=Path(DOCKER_DUMP_PATH),
         archive=False,
         skip_definer=options.skip_definer,
+        client_image=options.client_image,
     )
     command = ["docker", "run", "--name", container_name]
     command.extend(docker_host_gateway_args(options.host))

@@ -19,6 +19,7 @@ import dbtalk.database.mysql as mysql_transfer
 import dbtalk.database.schema as schema
 import dbtalk.mysql.client as mysql_client
 import dbtalk.settings as dbtalk_settings
+from dbtalk.context import DbtalkContext
 from dbtalk.database.models import (
     ColumnDefinition,
     DatabaseTransferError,
@@ -266,9 +267,10 @@ def test_mysql_client_file_and_command_helpers(tmp_path: Path) -> None:
         mysql_client.ensure_command_succeeded(subprocess.CompletedProcess([], 2, "", ""), "mysql")
 
 
-def test_mysql_client_docker_discovery_and_cleanup() -> None:
+def test_mysql_client_docker_image_check_and_cleanup() -> None:
+    image = "registry.example/mysql:8.0.39"
     with patch("dbtalk.mysql.client.shutil.which", return_value=None):
-        assert mysql_client.docker_mysql_image() == (
+        assert mysql_client.docker_mysql_image(image) == (
             None,
             "Docker is not installed or is not on PATH.",
         )
@@ -276,7 +278,7 @@ def test_mysql_client_docker_discovery_and_cleanup() -> None:
         patch("dbtalk.mysql.client.shutil.which", return_value="docker"),
         patch("dbtalk.mysql.client.subprocess.run", side_effect=OSError),
     ):
-        assert mysql_client.docker_mysql_image() == (None, "Docker could not be started.")
+        assert mysql_client.docker_mysql_image(image) == (None, "Docker could not be started.")
     with (
         patch("dbtalk.mysql.client.shutil.which", return_value="docker"),
         patch(
@@ -284,28 +286,28 @@ def test_mysql_client_docker_discovery_and_cleanup() -> None:
             return_value=subprocess.CompletedProcess([], 1, "", ""),
         ),
     ):
-        assert mysql_client.docker_mysql_image() == (
+        assert mysql_client.docker_mysql_image(image) == (
             None,
-            "Docker cannot inspect local images; check that its daemon is running.",
+            f"Configured MySQL Docker image is not available locally: {image}.",
         )
     with (
         patch("dbtalk.mysql.client.shutil.which", return_value="docker"),
         patch(
             "dbtalk.mysql.client.subprocess.run",
-            return_value=subprocess.CompletedProcess([], 0, "mysql:8.4\nmysql:latest\n", ""),
+            return_value=subprocess.CompletedProcess([], 0, "", ""),
         ),
     ):
-        assert mysql_client.docker_mysql_image() == ("mysql:latest", "")
+        assert mysql_client.docker_mysql_image(image) == (image, "")
     with (
         patch("dbtalk.mysql.client.shutil.which", return_value="docker"),
         patch(
             "dbtalk.mysql.client.subprocess.run",
-            return_value=subprocess.CompletedProcess([], 0, "mysql:<none>\npostgres:16\n", ""),
+            return_value=subprocess.CompletedProcess([], 1, "", ""),
         ),
     ):
-        assert mysql_client.docker_mysql_image() == (
+        assert mysql_client.docker_mysql_image(image) == (
             None,
-            "No local MySQL Docker image is available.",
+            f"Configured MySQL Docker image is not available locally: {image}.",
         )
     with patch("dbtalk.mysql.client.subprocess.run") as remove:
         mysql_client.remove_temporary_container("dbtalk-test", {"MYSQL_PWD": "secret"})
@@ -366,14 +368,31 @@ def test_database_cli_option_guards_and_settings_validation() -> None:
         database_cli.connection_from_options("postgres")
     with pytest.raises(click.UsageError, match="exactly one"):
         database_cli.connection_from_options("sqlite")
-    assert (
-        database_cli.operation_timeout_from_context(click.Context(click.Command("dbtalk")), None)
-        == dbtalk_settings.DEFAULT_OPERATION_TIMEOUT_SECONDS
+    context = click.Context(click.Command("dbtalk"))
+    context.obj = DbtalkContext(
+        settings=dbtalk_settings.Settings(
+            verbose=False,
+            logging=dbtalk_settings.LoggingSettings(level="INFO", format="%(message)s"),
+            mysql=dbtalk_settings.MySQLConfig(
+                output_directory="data",
+                client_image="mysql:8.0.39",
+                zero_datetime_as_null=True,
+            ),
+            database=dbtalk_settings.DatabaseTransferConfig(
+                query_timeout_seconds=15,
+                exec_timeout_seconds=45,
+            ),
+            postgres=dbtalk_settings.DumpRestoreConfig(
+                output_directory="data",
+                client_image="postgres:18-alpine",
+            ),
+        ),
+        verbose=False,
     )
-    assert (
-        database_cli.operation_timeout_from_context(click.Context(click.Command("dbtalk")), 15)
-        == 15
-    )
+    assert database_cli.query_timeout_from_context(context, None) == 15
+    assert database_cli.exec_timeout_from_context(context, None) == 45
+    assert database_cli.query_timeout_from_context(context, 5) == 5
+    assert database_cli.exec_timeout_from_context(context, 10) == 10
     with pytest.raises(RuntimeError, match="valid source"):
         database_cli.export_command_arguments({})
     with pytest.raises(RuntimeError, match="output path"):
@@ -413,18 +432,33 @@ def test_database_cli_option_guards_and_settings_validation() -> None:
     assert not dbtalk_settings.bool_config("off")
     assert dbtalk_settings.int_config("3307") == 3307
     assert dbtalk_settings.mapping_config(None) == {}
-    with pytest.raises(ValueError, match="database.operation_timeout_seconds"):
-        dbtalk_settings.load_database_transfer_config({"operation_timeout_seconds": 0})
-    with pytest.raises(ValueError, match="mysqldump.host"):
-        dbtalk_settings.load_mysql_dump_config({"host": ""})
-    with pytest.raises(ValueError, match="mysqldump.port"):
-        dbtalk_settings.load_mysql_dump_config({"port": 0})
-    with pytest.raises(ValueError, match="output_directory"):
-        dbtalk_settings.load_mysql_dump_config({"output_directory": "  "})
-    with pytest.raises(ValueError, match="mysqlrestore.host"):
-        dbtalk_settings.load_mysql_restore_config({"host": ""})
-    with pytest.raises(ValueError, match="mysqlrestore.port"):
-        dbtalk_settings.load_mysql_restore_config({"port": 65536})
+    with pytest.raises(ValueError, match="database.query_timeout_seconds"):
+        dbtalk_settings.load_database_transfer_config(
+            {"query_timeout_seconds": 0, "exec_timeout_seconds": 30}
+        )
+    with pytest.raises(ValueError, match="database.exec_timeout_seconds"):
+        dbtalk_settings.load_database_transfer_config(
+            {"query_timeout_seconds": 30, "exec_timeout_seconds": 0}
+        )
+    with pytest.raises(ValueError, match="database.query_timeout_seconds"):
+        dbtalk_settings.load_database_transfer_config({"exec_timeout_seconds": 30})
+    with pytest.raises(ValueError, match="mysql.output_directory"):
+        dbtalk_settings.load_dump_restore_config(
+            {"output_directory": "  "},
+            group="mysql",
+        )
+    with pytest.raises(ValueError, match="postgres.client_image"):
+        dbtalk_settings.load_dump_restore_config(
+            {"client_image": "  "},
+            group="postgres",
+        )
+    assert not dbtalk_settings.load_mysql_config(
+        {
+            "output_directory": "data",
+            "client_image": "mysql:8.0.39",
+            "zero_datetime_as_null": "false",
+        }
+    ).zero_datetime_as_null
 
 
 def test_database_export_output_path_resolution(

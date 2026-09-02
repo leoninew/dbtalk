@@ -5,24 +5,14 @@ logging:
   level: INFO
   format: "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
-mysqldump:
-  host: localhost
-  port: 3306
-  user: ""
-  password: ""
-  database: ""
+mysql:
   output_directory: data
-
-mysqlrestore:
-  host: localhost
-  port: 3306
-  user: ""
-  password: ""
-  database: ""
+  client_image: mysql:8.0.39
+  zero_datetime_as_null: true
 
 database:
-  zero_datetime_as_null: true
-  operation_timeout_seconds: 30
+  query_timeout_seconds: 30
+  exec_timeout_seconds: 30
 
 postgres:
   output_directory: data

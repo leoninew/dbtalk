@@ -39,7 +39,7 @@ from dbtalk.postgres.restore import (
     pg_restore_command_args,
     restore_database,
 )
-from dbtalk.settings import PostgresConfig
+from dbtalk.settings import DumpRestoreConfig
 
 
 def connection() -> PostgresConnection:
@@ -157,7 +157,7 @@ def test_default_dump_output_and_resolution_follow_directory_contract(
     target_directory = tmp_path / "exports"
     target_directory.mkdir()
     resolved = resolve_dump_options(
-        PostgresConfig(output_directory="data", client_image="postgres:18"),
+        DumpRestoreConfig(output_directory="data", client_image="postgres:18"),
         connection(),
         target_directory,
         None,

@@ -8,31 +8,22 @@ from pathlib import Path
 import pytest
 from pytest import MonkeyPatch
 
-from dbtalk.settings import load_settings
+from dbtalk.settings import DumpRestoreConfig, MySQLConfig, load_settings
 
 DEFAULT_SETTINGS = """verbose: false
 logging:
   level: INFO
   format: "%(asctime)s %(levelname)s %(name)s: %(message)s"
-mysqldump:
-  host: localhost
-  port: 3306
-  user: ""
-  password: ""
-  database: ""
+mysql:
   output_directory: data
-mysqlrestore:
-  host: localhost
-  port: 3306
-  user: ""
-  password: ""
-  database: ""
-database:
+  client_image: mysql:8.0.39
   zero_datetime_as_null: true
-  operation_timeout_seconds: 30
+database:
+  query_timeout_seconds: 30
+  exec_timeout_seconds: 30
 postgres:
   output_directory: data
-  client_image: postgres:18
+  client_image: postgres:18-alpine
 """
 
 
@@ -57,18 +48,23 @@ def test_loads_yaml_settings(tmp_path: Path) -> None:
 
     settings = load_settings(tmp_path)
 
-    assert settings.mysqldump.host == "localhost"
-    assert settings.mysqldump.port == 3306
-    assert settings.mysqlrestore.database == ""
-    assert settings.database.zero_datetime_as_null is True
-    assert settings.database.operation_timeout_seconds == 30
+    assert settings.mysql.output_directory == "data"
+    assert settings.mysql.client_image == "mysql:8.0.39"
+    assert type(settings.mysql) is MySQLConfig
+    assert isinstance(settings.mysql, DumpRestoreConfig)
+    assert type(settings.postgres) is DumpRestoreConfig
+    assert settings.mysql.zero_datetime_as_null is True
+    assert not hasattr(settings.postgres, "zero_datetime_as_null")
+    assert not hasattr(settings.database, "zero_datetime_as_null")
+    assert settings.database.query_timeout_seconds == 30
+    assert settings.database.exec_timeout_seconds == 30
     assert settings.postgres.output_directory == "data"
-    assert settings.postgres.client_image == "postgres:18"
+    assert settings.postgres.client_image == "postgres:18-alpine"
     assert settings.logging.level == "INFO"
     assert settings.logging.format == "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
 
-def test_mysql_dump_settings_do_not_expose_database_lifecycle_switches(
+def test_mysql_dump_restore_settings_do_not_expose_connection_or_target_fields(
     tmp_path: Path,
 ) -> None:
     write_settings(tmp_path)
@@ -76,54 +72,79 @@ def test_mysql_dump_settings_do_not_expose_database_lifecycle_switches(
         (tmp_path / "dbtalk.yaml")
         .read_text(encoding="utf-8")
         .replace(
-            "  output_directory: data\n",
-            "  output_directory: data\n  create_database: true\n  drop_database: true\n",
+            "  client_image: mysql:8.0.39\n",
+            "  client_image: mysql:8.0.39\n  host: db.example.test\n  port: 3307\n"
+            "  user: backup\n  password: secret\n  database: app\n",
         ),
         encoding="utf-8",
     )
 
     settings = load_settings(tmp_path)
 
-    assert not hasattr(settings.mysqldump, "create_database")
-    assert not hasattr(settings.mysqldump, "drop_database")
+    assert not hasattr(settings.mysql, "host")
+    assert not hasattr(settings.mysql, "port")
+    assert not hasattr(settings.mysql, "user")
+    assert not hasattr(settings.mysql, "password")
+    assert not hasattr(settings.mysql, "database")
 
 
 def test_dotenv_overrides_yaml(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     write_settings(tmp_path)
     (tmp_path / ".env.local").write_text(
-        "DBTALK_MYSQLDUMP__HOST=dotenv.example.test\n",
+        "DBTALK_MYSQL__CLIENT_IMAGE=dotenv.example/mysql:9\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("DBTALK_ENVKEY", "local")
 
     settings = load_settings(tmp_path)
 
-    assert settings.mysqldump.host == "dotenv.example.test"
+    assert settings.mysql.client_image == "dotenv.example/mysql:9"
 
 
 def test_os_environment_overrides_dotenv(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     write_settings(tmp_path)
     (tmp_path / ".env.local").write_text(
-        "DBTALK_MYSQLDUMP__HOST=dotenv.example.test\n",
+        "DBTALK_MYSQL__CLIENT_IMAGE=dotenv.example/mysql:9\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("DBTALK_ENVKEY", "local")
-    monkeypatch.setenv("DBTALK_MYSQLDUMP__HOST", "os.example.test")
+    monkeypatch.setenv("DBTALK_MYSQL__CLIENT_IMAGE", "os.example/mysql:9")
 
     settings = load_settings(tmp_path)
 
-    assert settings.mysqldump.host == "os.example.test"
+    assert settings.mysql.client_image == "os.example/mysql:9"
 
 
-def test_database_operation_timeout_can_be_overridden(
+def test_dump_restore_directory_and_image_can_be_overridden(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     write_settings(tmp_path)
-    monkeypatch.setenv("DBTALK_DATABASE__OPERATION_TIMEOUT_SECONDS", "15")
+    monkeypatch.setenv("DBTALK_MYSQL__OUTPUT_DIRECTORY", "backups/mysql")
+    monkeypatch.setenv("DBTALK_MYSQL__CLIENT_IMAGE", "registry.example/mysql:9")
+    monkeypatch.setenv("DBTALK_MYSQL__ZERO_DATETIME_AS_NULL", "false")
+    monkeypatch.setenv("DBTALK_POSTGRES__OUTPUT_DIRECTORY", "backups/postgres")
+    monkeypatch.setenv("DBTALK_POSTGRES__CLIENT_IMAGE", "registry.example/postgres:19")
 
     settings = load_settings(tmp_path)
 
-    assert settings.database.operation_timeout_seconds == 15
+    assert settings.mysql.output_directory == "backups/mysql"
+    assert settings.mysql.client_image == "registry.example/mysql:9"
+    assert settings.mysql.zero_datetime_as_null is False
+    assert settings.postgres.output_directory == "backups/postgres"
+    assert settings.postgres.client_image == "registry.example/postgres:19"
+
+
+def test_database_query_and_exec_timeouts_can_be_overridden(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    write_settings(tmp_path)
+    monkeypatch.setenv("DBTALK_DATABASE__QUERY_TIMEOUT_SECONDS", "15")
+    monkeypatch.setenv("DBTALK_DATABASE__EXEC_TIMEOUT_SECONDS", "45")
+
+    settings = load_settings(tmp_path)
+
+    assert settings.database.query_timeout_seconds == 15
+    assert settings.database.exec_timeout_seconds == 45
 
 
 def test_postgres_client_image_can_be_overridden(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -144,11 +165,11 @@ def test_frozen_binary_loads_embedded_config_and_executable_overrides(
     executable_root.mkdir()
     write_settings(bundle_root)
     (bundle_root / "dbtalk.yaml").write_text(
-        DEFAULT_SETTINGS.replace("operation_timeout_seconds: 30", "operation_timeout_seconds: 61"),
+        DEFAULT_SETTINGS.replace("query_timeout_seconds: 30", "query_timeout_seconds: 61"),
         encoding="utf-8",
     )
     (executable_root / "dbtalk.yaml").write_text(
-        "mysqldump:\n  host: executable.example.test\n",
+        "mysql:\n  client_image: executable.example/mysql:9\n",
         encoding="utf-8",
     )
     (executable_root / ".env.local").write_text(
@@ -164,8 +185,9 @@ def test_frozen_binary_loads_embedded_config_and_executable_overrides(
 
     settings = load_settings()
 
-    assert settings.mysqldump.host == "executable.example.test"
-    assert settings.database.operation_timeout_seconds == 61
+    assert settings.mysql.client_image == "executable.example/mysql:9"
+    assert settings.database.query_timeout_seconds == 61
+    assert settings.database.exec_timeout_seconds == 30
     assert settings.postgres.client_image == "dotenv.example/postgres:19"
 
 

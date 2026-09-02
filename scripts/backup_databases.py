@@ -41,6 +41,7 @@ class BackupTarget:
 @dataclass(frozen=True)
 class BackupConfig:
     output_directory: Path
+    target_validation_query_timeout_seconds: int
     targets: tuple[BackupTarget, ...]
 
 
@@ -83,37 +84,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Dump the databases declared in a YAML configuration.",
         description="Sequentially dump the databases declared in a YAML configuration.",
     )
-    backup_parser.add_argument(
-        "--config",
-        type=Path,
-        default=DEFAULT_CONFIG_PATH,
-        help="Backup YAML path (default: scripts/backup_databases.yaml).",
+    backup_parser.set_defaults(
+        config=DEFAULT_CONFIG_PATH,
+        dbtalk_command="dbtalk",
+        dry_run=True,
     )
     backup_parser.add_argument(
-        "--dbtalk-command",
-        default="dbtalk",
-        help="dbtalk executable or path (default: dbtalk).",
-    )
-    mode = backup_parser.add_mutually_exclusive_group()
-    mode.add_argument(
-        "--dry-run",
-        dest="dry_run",
-        action="store_true",
-        help="List configured dumps without checking DSNs or creating files (default).",
-    )
-    mode.add_argument(
         "--no-dry-run",
         dest="dry_run",
         action="store_false",
         help="Execute the configured dumps and write the backup manifest.",
     )
-    backup_parser.set_defaults(dry_run=True)
     backup_parser.add_argument(
+        "-c",
         "--continue-on-error",
         action="store_true",
         help="Continue remaining backups after an individual backup fails.",
     )
     backup_parser.add_argument(
+        "-r",
         "--resume",
         type=Path,
         metavar="DIRECTORY",
@@ -139,8 +128,11 @@ def build_parser() -> argparse.ArgumentParser:
     test_parser.add_argument(
         "--timeout",
         type=positive_integer,
-        default=10,
-        help="Maximum query time in seconds (default: 10).",
+        default=None,
+        help=(
+            "Maximum target validation query time in seconds. "
+            "Overrides target_validation.query_timeout_seconds in the backup YAML."
+        ),
     )
     return parser
 
@@ -180,6 +172,19 @@ def _parse_enabled(values: Mapping[str, object], context: str) -> bool:
     raise BackupError(f"{context}.enabled must be a boolean")
 
 
+def _positive_config_integer(value: object, context: str) -> int:
+    if isinstance(value, bool):
+        raise BackupError(f"{context} must be a positive integer")
+    if isinstance(value, int) and value > 0:
+        return value
+    if isinstance(value, str):
+        try:
+            return positive_integer(value)
+        except argparse.ArgumentTypeError as error:
+            raise BackupError(f"{context} must be a positive integer") from error
+    raise BackupError(f"{context} must be a positive integer")
+
+
 def load_backup_config(config_path: Path) -> BackupConfig:
     config_path = config_path.expanduser().resolve()
     if not config_path.is_file():
@@ -201,6 +206,14 @@ def load_backup_config(config_path: Path) -> BackupConfig:
     output_directory = Path(output_value)
     if not output_directory.is_absolute():
         output_directory = config_path.parent / output_directory
+    target_validation_config = _mapping(
+        config.get("target_validation"),
+        "config.target_validation",
+    )
+    target_validation_query_timeout_seconds = _positive_config_integer(
+        target_validation_config.get("query_timeout_seconds"),
+        "config.target_validation.query_timeout_seconds",
+    )
 
     connections_value = config.get("connections")
     connections = _mapping(connections_value, "config.connections")
@@ -238,6 +251,7 @@ def load_backup_config(config_path: Path) -> BackupConfig:
 
     return BackupConfig(
         output_directory=output_directory.resolve(),
+        target_validation_query_timeout_seconds=target_validation_query_timeout_seconds,
         targets=tuple(targets),
     )
 
@@ -458,7 +472,6 @@ def run_dsn_test(
     dsn_env = "DBTALK_BACKUP_DSN"
     command = [
         dbtalk,
-        "database",
         "query",
         "--dsn-env",
         dsn_env,
@@ -642,10 +655,15 @@ def run_tests(args: argparse.Namespace) -> int:
     enabled_targets = tuple(target for target in backup_config.targets if target.enabled)
     require_dsns(enabled_targets)
     dbtalk = resolve_command(args.dbtalk_command)
+    timeout_seconds = (
+        args.timeout
+        if args.timeout is not None
+        else backup_config.target_validation_query_timeout_seconds
+    )
 
     total = len(enabled_targets)
     passed = 0
-    logging.info("dsn test run started variables=%d timeout_seconds=%d", total, args.timeout)
+    logging.info("dsn test run started variables=%d timeout_seconds=%d", total, timeout_seconds)
     for target in backup_config.targets:
         if not target.enabled:
             logging.info(
@@ -663,7 +681,7 @@ def run_tests(args: argparse.Namespace) -> int:
             target.database,
         )
         started_at = time.perf_counter()
-        succeeded = run_dsn_test(dbtalk, target.dsn, args.timeout)
+        succeeded = run_dsn_test(dbtalk, target.dsn, timeout_seconds)
         duration_seconds = time.perf_counter() - started_at
         if succeeded:
             passed += 1

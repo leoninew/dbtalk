@@ -93,14 +93,14 @@ def is_local_mysql_host(host: str) -> bool:
     return host.lower() in LOCAL_MYSQL_HOSTS
 
 
-def docker_mysql_image() -> tuple[str | None, str]:
-    """Return an available local MySQL image, preferring the latest tag."""
+def docker_mysql_image(image: str) -> tuple[str | None, str]:
+    """Return one configured local MySQL image without pulling it."""
     if shutil.which("docker") is None:
         return None, "Docker is not installed or is not on PATH."
 
     try:
         result = subprocess.run(
-            ["docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}", "mysql"],
+            ["docker", "image", "inspect", image],
             check=False,
             capture_output=True,
             text=True,
@@ -109,21 +109,8 @@ def docker_mysql_image() -> tuple[str | None, str]:
         return None, "Docker could not be started."
 
     if result.returncode != 0:
-        return (
-            None,
-            "Docker cannot inspect local images; check that its daemon is running.",
-        )
-
-    images = [
-        image
-        for line in result.stdout.splitlines()
-        if (image := line.strip()).startswith("mysql:") and image != "mysql:<none>"
-    ]
-    if "mysql:latest" in images:
-        return "mysql:latest", ""
-    if images:
-        return images[0], ""
-    return None, "No local MySQL Docker image is available."
+        return None, f"Configured MySQL Docker image is not available locally: {image}."
+    return image, ""
 
 
 def docker_mapped_mysql_container(host: str, port: int) -> str | None:

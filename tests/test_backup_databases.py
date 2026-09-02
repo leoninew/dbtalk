@@ -30,12 +30,35 @@ def test_parser_places_existing_options_under_backup() -> None:
     continue_args = backup_databases.build_parser().parse_args(["backup", "--continue-on-error"])
     assert continue_args.continue_on_error is True
 
+    short_continue_args = backup_databases.build_parser().parse_args(["backup", "-c"])
+    assert short_continue_args.continue_on_error is True
+
     resume_args = backup_databases.build_parser().parse_args(["backup", "--resume", "existing"])
     assert resume_args.resume == Path("existing")
+
+    short_resume_args = backup_databases.build_parser().parse_args(["backup", "-r", "existing"])
+    assert short_resume_args.resume == Path("existing")
+
+    default_test_args = backup_databases.build_parser().parse_args(["test"])
+    assert default_test_args.timeout is None
 
     test_args = backup_databases.build_parser().parse_args(["test", "--timeout", "7"])
     assert test_args.command == "test"
     assert test_args.timeout == 7
+
+
+def test_backup_parser_rejects_removed_options() -> None:
+    parser = backup_databases.build_parser()
+    no_dry_run_args = parser.parse_args(["backup", "--no-dry-run"])
+    assert no_dry_run_args.dry_run is False
+
+    for arguments in (
+        ("--dry-run",),
+        ("--config", "backup.yaml"),
+        ("--dbtalk-command", "dbtalk"),
+    ):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["backup", *arguments])
 
 
 def test_resolve_command_preserves_path_command_name(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -48,6 +71,8 @@ def test_load_backup_config_reads_inline_dsn_from_dynaconf_yaml(tmp_path: Path) 
     config_path = tmp_path / "backup_databases.yaml"
     config_path.write_text(
         "output_directory: ../data\n"
+        "target_validation:\n"
+        "  query_timeout_seconds: 10\n"
         "connections:\n"
         "  local:\n"
         "    engine: mysql\n"
@@ -62,6 +87,7 @@ def test_load_backup_config_reads_inline_dsn_from_dynaconf_yaml(tmp_path: Path) 
 
     assert config.targets[0].dsn == "sqlite:///app"
     assert config.targets[0].database == "app"
+    assert config.target_validation_query_timeout_seconds == 10
 
 
 def test_load_backup_config_uses_process_environment_override(
@@ -70,6 +96,8 @@ def test_load_backup_config_uses_process_environment_override(
     config_path = tmp_path / "backup_databases.yaml"
     config_path.write_text(
         "output_directory: ../data\n"
+        "target_validation:\n"
+        "  query_timeout_seconds: 10\n"
         "connections:\n"
         "  local:\n"
         "    engine: mysql\n"
@@ -94,6 +122,8 @@ def test_disabled_targets_are_skipped_by_connection_tests(
     config_path = tmp_path / "backup_databases.yaml"
     config_path.write_text(
         "output_directory: ../data\n"
+        "target_validation:\n"
+        "  query_timeout_seconds: 12\n"
         "connections:\n"
         "  local:\n"
         "    engine: mysql\n"
@@ -107,7 +137,7 @@ def test_disabled_targets_are_skipped_by_connection_tests(
         "        enabled: false\n",
         encoding="utf-8",
     )
-    args = Namespace(config=config_path, dbtalk_command="dbtalk", timeout=3)
+    args = Namespace(config=config_path, dbtalk_command="dbtalk", timeout=None)
     with (
         patch.object(backup_databases, "resolve_command", return_value="dbtalk"),
         patch.object(backup_databases, "run_dsn_test", return_value=True) as run_test,
@@ -115,7 +145,7 @@ def test_disabled_targets_are_skipped_by_connection_tests(
     ):
         assert backup_databases.run_tests(args) == 0
 
-    assert run_test.call_args.args[:3] == ("dbtalk", "sqlite:///enabled", 3)
+    assert run_test.call_args.args[:3] == ("dbtalk", "sqlite:///enabled", 12)
     assert "dsn test skipped connection=local database=disabled enabled=False" in caplog.text
 
 
@@ -212,7 +242,6 @@ def test_run_dsn_test_uses_read_only_database_query(caplog: pytest.LogCaptureFix
     command = run.call_args.args[0]
     assert command == [
         "dbtalk",
-        "database",
         "query",
         "--dsn-env",
         "DBTALK_BACKUP_DSN",
@@ -226,7 +255,7 @@ def test_run_dsn_test_uses_read_only_database_query(caplog: pytest.LogCaptureFix
     assert run.call_args.kwargs["cwd"] == backup_databases.REPOSITORY_ROOT
     assert run.call_args.kwargs["capture_output"] is True
     assert run.call_args.kwargs["check"] is False
-    assert "dbtalk command=dbtalk database query --dsn-env DBTALK_BACKUP_DSN" in caplog.text
+    assert "dbtalk command=dbtalk query --dsn-env DBTALK_BACKUP_DSN" in caplog.text
 
 
 def test_run_dump_logs_the_dbtalk_command(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
@@ -275,6 +304,8 @@ def test_run_backups_continues_after_individual_errors_when_requested(
     config_path = tmp_path / "backup_databases.yaml"
     config_path.write_text(
         "output_directory: backups\n"
+        "target_validation:\n"
+        "  query_timeout_seconds: 10\n"
         "connections:\n"
         "  local:\n"
         "    engine: mysql\n"
@@ -358,6 +389,8 @@ def test_run_backups_resume_reuses_successful_backups_and_retries_missing_ones(
     config_path = tmp_path / "backup_databases.yaml"
     config_path.write_text(
         "output_directory: backups\n"
+        "target_validation:\n"
+        "  query_timeout_seconds: 10\n"
         "connections:\n"
         "  local:\n"
         "    engine: mysql\n"
@@ -418,6 +451,8 @@ def test_run_tests_reports_each_result_and_returns_failure(
     config_path = tmp_path / "backup_databases.yaml"
     config_path.write_text(
         "output_directory: ../data\n"
+        "target_validation:\n"
+        "  query_timeout_seconds: 17\n"
         "connections:\n"
         "  local:\n"
         "    engine: mysql\n"

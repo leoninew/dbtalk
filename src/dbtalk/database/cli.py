@@ -10,8 +10,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import click
 
-from dbtalk.context import DbtalkContext
-from dbtalk.settings import DEFAULT_OPERATION_TIMEOUT_SECONDS
+from dbtalk.context import DbtalkContext, dbtalk_context
 
 from .format import gzip_output_path
 from .operations import execute_from_dsn, parse_parameters, query_from_dsn, render_query
@@ -86,26 +85,34 @@ def connection_from_options(
 
 
 def zero_datetime_as_null_from_context(ctx: click.Context) -> bool:
-    """Read the root database-transfer setting, keeping direct command tests usable."""
+    """Read the MySQL zero-date setting, keeping direct command tests usable."""
 
     root_object = ctx.find_root().obj
     if not isinstance(root_object, DbtalkContext):
         return True
-    return root_object.settings.database.zero_datetime_as_null
+    return root_object.settings.mysql.zero_datetime_as_null
 
 
-def operation_timeout_from_context(
+def query_timeout_from_context(
     ctx: click.Context,
     requested_timeout_seconds: int | None,
 ) -> int:
-    """Use an explicit CLI timeout or the centralized database default."""
+    """Use an explicit query timeout or the configured query default."""
 
     if requested_timeout_seconds is not None:
         return requested_timeout_seconds
-    root_object = ctx.find_root().obj
-    if not isinstance(root_object, DbtalkContext):
-        return DEFAULT_OPERATION_TIMEOUT_SECONDS
-    return root_object.settings.database.operation_timeout_seconds
+    return dbtalk_context(ctx).settings.database.query_timeout_seconds
+
+
+def exec_timeout_from_context(
+    ctx: click.Context,
+    requested_timeout_seconds: int | None,
+) -> int:
+    """Use an explicit exec timeout or the configured exec default."""
+
+    if requested_timeout_seconds is not None:
+        return requested_timeout_seconds
+    return dbtalk_context(ctx).settings.database.exec_timeout_seconds
 
 
 def default_export_output(
@@ -387,7 +394,7 @@ def import_command_arguments(options: dict[str, object]) -> ImportCommandArgumen
     "-t",
     type=click.IntRange(min=1),
     default=None,
-    help="Maximum statement time in seconds. Defaults to database.operation_timeout_seconds.",
+    help="Maximum statement time in seconds. Defaults to database.query_timeout_seconds.",
 )
 @click.option(
     "--param",
@@ -420,7 +427,7 @@ def query_command(
             dsn_env,
             sql,
             parse_parameters(parameters),
-            timeout_seconds=operation_timeout_from_context(ctx, timeout_seconds),
+            timeout_seconds=query_timeout_from_context(ctx, timeout_seconds),
         )
         click.echo(render_query(result, output_format))
     except DatabaseTransferError as error:
@@ -439,7 +446,7 @@ def query_command(
     "-t",
     type=click.IntRange(min=1),
     default=None,
-    help="Maximum statement time in seconds. Defaults to database.operation_timeout_seconds.",
+    help="Maximum statement time in seconds. Defaults to database.exec_timeout_seconds.",
 )
 @click.option(
     "--write",
@@ -472,7 +479,7 @@ def exec_command(
             dsn_env,
             sql,
             parse_parameters(parameters),
-            timeout_seconds=operation_timeout_from_context(ctx, timeout_seconds),
+            timeout_seconds=exec_timeout_from_context(ctx, timeout_seconds),
             allow_write=write_enabled,
         )
     except DatabaseTransferError as error:

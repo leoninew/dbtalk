@@ -721,7 +721,7 @@ class DatabaseTransferTests(unittest.TestCase):
             ) as export,
             patch.dict(
                 os.environ,
-                {"DBTALK_DATABASE__ZERO_DATETIME_AS_NULL": "false"},
+                {"DBTALK_MYSQL__ZERO_DATETIME_AS_NULL": "false"},
                 clear=False,
             ),
         ):

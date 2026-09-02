@@ -79,7 +79,7 @@ mysql.add_command(permissions)
     type=click.Path(path_type=Path),
     help=(
         "SQL dump output file or existing directory. Defaults to a timestamped file "
-        "in mysqldump.output_directory."
+        "in mysql.output_directory."
     ),
 )
 @click.option(
@@ -107,7 +107,7 @@ def dump_command(  # noqa: PLR0913 - Click passes one argument for each CLI opti
     settings = context_settings(ctx)
     host, port, user, password, dsn_database = mysql_connection_from_dsn(dsn_value, dsn_env)
     options = resolve_dump_options(
-        settings.mysqldump,
+        settings.mysql,
         MysqlDumpOverrides(
             host=host,
             port=port,
@@ -148,8 +148,10 @@ def restore_command(  # noqa: PLR0913 - Click passes one argument for each CLI o
     target_database: str | None,
 ) -> None:
     """Import a MySQL dump."""
+    settings = context_settings(ctx)
     host, port, user, password, dsn_database = mysql_connection_from_dsn(dsn_value, dsn_env)
     options = resolve_restore_options(
+        settings.mysql,
         MysqlRestoreOverrides(
             host=host,
             port=port,
@@ -158,7 +160,7 @@ def restore_command(  # noqa: PLR0913 - Click passes one argument for each CLI o
             input=input,
             target_database=target_database,
             dsn_database=dsn_database,
-        )
+        ),
     )
     restored_input = restore_database(options)
     click.echo(f"MySQL dump restored from {restored_input}")

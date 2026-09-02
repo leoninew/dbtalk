@@ -1,5 +1,8 @@
 # Copy this file to backup_databases.yaml and fill in the DSNs.
 output_directory: ../data
+target_validation:
+  # Maximum query time for validating each enabled backup target.
+  query_timeout_seconds: 10
 
 connections:
   example:

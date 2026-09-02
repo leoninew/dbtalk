@@ -28,7 +28,7 @@ MySQL 与 PostgreSQL URL 的末尾 database path 在语法上可省略，例如 
 
 ## Query / Exec
 
-SQL 使用 SQLAlchemy named bind 参数。参数格式为可重复的 `NAME=JSON_VALUE`，字符串需要使用 JSON 字符串表示。两个命令都有 `--timeout` / `-t`，单位为秒，只接受正整数。省略时使用配置中的 `database.operation_timeout_seconds`（默认 `30`）。超时仅针对当前单条语句。
+SQL 使用 SQLAlchemy named bind 参数。参数格式为可重复的 `NAME=JSON_VALUE`，字符串需要使用 JSON 字符串表示。两个命令都有 `--timeout` / `-t`，单位为秒，只接受正整数。`query` 省略时使用 `database.query_timeout_seconds`，`exec` 省略时使用 `database.exec_timeout_seconds`，两者默认均为 `30`。超时仅针对当前单条语句。
 
 ```bash
 uv run dbtalk query \
@@ -60,11 +60,13 @@ uv run dbtalk exec \
 
 ```yaml
 database:
-  operation_timeout_seconds: 30
+  query_timeout_seconds: 30
+  exec_timeout_seconds: 30
 ```
 
 ```bash
-export DBTALK_DATABASE__OPERATION_TIMEOUT_SECONDS='15'
+export DBTALK_DATABASE__QUERY_TIMEOUT_SECONDS='15'
+export DBTALK_DATABASE__EXEC_TIMEOUT_SECONDS='45'
 ```
 
 同步 Python API 为 `DatabaseClient`，异步 API 为 `AsyncDatabaseClient`；异步 API 会按 async driver 建立 SQLAlchemy async engine，不向调用方暴露原生 DBAPI 连接。
@@ -135,4 +137,4 @@ uv run dbtalk import \
 
 ## JSONL 类型
 
-BLOB 使用 base64 type tag，DECIMAL 使用 decimal type tag。无时区日期时间按 `--tz` 解释并规范化为 UTC ISO 8601 字符串。MySQL 零日期可由 `database.zero_datetime_as_null` 默认转换为 JSON `null`；设为 `false` 时遇到零日期会失败。PostgreSQL 普通表、主键、外键、常见类型和 JSONL transfer 由 SQLAlchemy Inspector 和对应 dialect 处理。导入到 `BOOLEAN` 列时，JSON 的 `true`/`false`、数值 `0`/`1` 及常见布尔文本会规范化为目标驱动可绑定的 Boolean；其他值会在写入前失败。
+BLOB 使用 base64 type tag，DECIMAL 使用 decimal type tag。无时区日期时间按 `--tz` 解释并规范化为 UTC ISO 8601 字符串。MySQL 零日期可由 `mysql.zero_datetime_as_null` 默认转换为 JSON `null`；设为 `false` 时遇到零日期会失败。PostgreSQL 普通表、主键、外键、常见类型和 JSONL transfer 由 SQLAlchemy Inspector 和对应 dialect 处理。导入到 `BOOLEAN` 列时，JSON 的 `true`/`false`、数值 `0`/`1` 及常见布尔文本会规范化为目标驱动可绑定的 Boolean；其他值会在写入前失败。

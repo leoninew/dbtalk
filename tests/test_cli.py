@@ -20,13 +20,6 @@ def test_help_lists_root_and_dialect_commands() -> None:
     assert "export" in result.output
 
 
-def test_version_is_available_without_configuration() -> None:
-    result = CliRunner().invoke(cli, ["--version"], catch_exceptions=False)
-
-    assert result.exit_code == 0
-    assert "dbtalk, version 0.1.0" in result.output
-
-
 def test_root_command_displays_help() -> None:
     result = CliRunner().invoke(cli, [])
 

@@ -11,7 +11,7 @@ from pathlib import Path, PurePath, PurePosixPath
 
 import click
 
-from dbtalk.settings import PostgresConfig
+from dbtalk.settings import DumpRestoreConfig
 
 from .client import (
     PostgresConnection,
@@ -52,7 +52,7 @@ def default_dump_output(
 
 
 def resolve_dump_options(
-    config: PostgresConfig,
+    config: DumpRestoreConfig,
     connection: PostgresConnection,
     output: Path | None,
     compression_level: int | None,

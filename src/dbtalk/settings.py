@@ -12,8 +12,6 @@ from typing import Any
 from dynaconf import Dynaconf
 
 DEFAULT_MYSQL_PORT = 3306
-DEFAULT_OPERATION_TIMEOUT_SECONDS = 30
-DEFAULT_POSTGRES_CLIENT_IMAGE = "postgres:18"
 ENV_PREFIX = "DBTALK"
 ENV_SELECTOR = f"{ENV_PREFIX}_ENVKEY"
 
@@ -25,44 +23,29 @@ class LoggingSettings:
 
 
 @dataclass(frozen=True)
-class MySQLDumpConfig:
-    host: str
-    port: int
-    user: str
-    password: str
-    database: str
+class DumpRestoreConfig:
     output_directory: str
+    client_image: str
 
 
 @dataclass(frozen=True)
-class MySQLRestoreConfig:
-    host: str
-    port: int
-    user: str
-    password: str
-    database: str = ""
+class MySQLConfig(DumpRestoreConfig):
+    zero_datetime_as_null: bool
 
 
 @dataclass(frozen=True)
 class DatabaseTransferConfig:
-    zero_datetime_as_null: bool
-    operation_timeout_seconds: int
-
-
-@dataclass(frozen=True)
-class PostgresConfig:
-    output_directory: str
-    client_image: str
+    query_timeout_seconds: int
+    exec_timeout_seconds: int
 
 
 @dataclass(frozen=True)
 class Settings:
     verbose: bool
     logging: LoggingSettings
-    mysqldump: MySQLDumpConfig
-    mysqlrestore: MySQLRestoreConfig
+    mysql: MySQLConfig
     database: DatabaseTransferConfig
-    postgres: PostgresConfig
+    postgres: DumpRestoreConfig
 
 
 def default_project_root() -> Path:
@@ -90,10 +73,12 @@ def load_settings(project_root: Path | None = None) -> Settings:
     return Settings(
         verbose=bool_config(config.get("verbose", False)),
         logging=load_logging_settings(config.get("logging")),
-        mysqldump=load_mysql_dump_config(config.get("mysqldump")),
-        mysqlrestore=load_mysql_restore_config(config.get("mysqlrestore")),
+        mysql=load_mysql_config(config.get("mysql")),
         database=load_database_transfer_config(config.get("database")),
-        postgres=load_postgres_config(config.get("postgres")),
+        postgres=load_dump_restore_config(
+            config.get("postgres"),
+            group="postgres",
+        ),
     )
 
 
@@ -136,85 +121,51 @@ def load_logging_settings(value: Any) -> LoggingSettings:
     return LoggingSettings(level=level, format=log_format)
 
 
-def load_mysql_dump_config(value: Any) -> MySQLDumpConfig:
+def load_dump_restore_config(
+    value: Any,
+    *,
+    group: str,
+) -> DumpRestoreConfig:
     config = mapping_config(value)
-    host = config.get("host", "localhost")
-    user = config.get("user", "")
-    password = config.get("password", "")
-    database = config.get("database", "")
     output_directory = config.get("output_directory", "data")
-    assert isinstance(host, str)
-    assert isinstance(user, str)
-    assert isinstance(password, str)
-    assert isinstance(database, str)
-    assert isinstance(output_directory, str)
-
-    port = int_config(config.get("port", DEFAULT_MYSQL_PORT))
-    if not host:
-        raise ValueError("mysqldump.host must not be empty")
-    if not 1 <= port <= 65535:
-        raise ValueError("mysqldump.port must be between 1 and 65535")
-    if not output_directory.strip():
-        raise ValueError("mysqldump.output_directory must not be empty")
-    return MySQLDumpConfig(
-        host=host,
-        port=port,
-        user=user,
-        password=password,
-        database=database,
+    client_image = config.get("client_image")
+    if not isinstance(output_directory, str) or not output_directory.strip():
+        raise ValueError(f"{group}.output_directory must not be empty")
+    if not isinstance(client_image, str) or not client_image.strip():
+        raise ValueError(f"{group}.client_image must not be empty")
+    return DumpRestoreConfig(
         output_directory=output_directory,
+        client_image=client_image,
     )
 
 
-def load_mysql_restore_config(value: Any) -> MySQLRestoreConfig:
+def load_mysql_config(value: Any) -> MySQLConfig:
     config = mapping_config(value)
-    host = config.get("host", "localhost")
-    user = config.get("user", "")
-    password = config.get("password", "")
-    database = config.get("database", "")
-    assert isinstance(host, str)
-    assert isinstance(user, str)
-    assert isinstance(password, str)
-    assert isinstance(database, str)
-
-    port = int_config(config.get("port", DEFAULT_MYSQL_PORT))
-    if not host:
-        raise ValueError("mysqlrestore.host must not be empty")
-    if not 1 <= port <= 65535:
-        raise ValueError("mysqlrestore.port must be between 1 and 65535")
-    return MySQLRestoreConfig(
-        host=host,
-        port=port,
-        user=user,
-        password=password,
-        database=database,
+    dump_restore = load_dump_restore_config(config, group="mysql")
+    return MySQLConfig(
+        output_directory=dump_restore.output_directory,
+        client_image=dump_restore.client_image,
+        zero_datetime_as_null=bool_config(config.get("zero_datetime_as_null", True)),
     )
 
 
 def load_database_transfer_config(value: Any) -> DatabaseTransferConfig:
     config = mapping_config(value)
-    timeout_seconds = int_config(
-        config.get("operation_timeout_seconds", DEFAULT_OPERATION_TIMEOUT_SECONDS)
-    )
-    if timeout_seconds <= 0:
-        raise ValueError("database.operation_timeout_seconds must be greater than zero")
     return DatabaseTransferConfig(
-        zero_datetime_as_null=bool_config(config.get("zero_datetime_as_null", True)),
-        operation_timeout_seconds=timeout_seconds,
+        query_timeout_seconds=load_positive_seconds(config, "query_timeout_seconds"),
+        exec_timeout_seconds=load_positive_seconds(config, "exec_timeout_seconds"),
     )
 
 
-def load_postgres_config(value: Any) -> PostgresConfig:
-    config = mapping_config(value)
-    output_directory = config.get("output_directory", "data")
-    client_image = config.get("client_image", DEFAULT_POSTGRES_CLIENT_IMAGE)
-    assert isinstance(output_directory, str)
-    assert isinstance(client_image, str)
-    if not output_directory.strip():
-        raise ValueError("postgres.output_directory must not be empty")
-    if not client_image.strip():
-        raise ValueError("postgres.client_image must not be empty")
-    return PostgresConfig(
-        output_directory=output_directory,
-        client_image=client_image,
-    )
+def load_positive_seconds(config: Mapping[str, object], key: str) -> int:
+    config_key = f"database.{key}"
+    raw_timeout_seconds = config.get(key)
+    if raw_timeout_seconds is None:
+        raise ValueError(f"{config_key} must be configured")
+    try:
+        timeout_seconds = int_config(raw_timeout_seconds)
+    except (AssertionError, ValueError) as error:
+        raise ValueError(f"{config_key} must be a positive integer") from error
+    if timeout_seconds <= 0:
+        raise ValueError(f"{config_key} must be greater than zero")
+    return timeout_seconds
