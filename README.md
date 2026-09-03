@@ -26,23 +26,24 @@ uv run dbtalk --help
 
 ## Quick start
 
-Keep connection strings in environment variables so passwords do not enter shell history:
+Keep the connection string in the current directory's `.env`, then refer to it only by name:
+
+```dotenv
+DBTALK_DSN_APP=sqlite:///./data/app.db
+```
 
 ```bash
-mkdir -p data
-export APP_DSN='sqlite:///./data/app.db'
-
 uv run dbtalk query \
-  --dsn-env APP_DSN \
+  --dsn-env DBTALK_DSN_APP \
   --sql 'SELECT 1 AS ok'
 
 uv run dbtalk exec \
   --write \
-  --dsn-env APP_DSN \
+  --dsn-env DBTALK_DSN_APP \
   --sql 'CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)'
 ```
 
-For Bash, set the variable with `export APP_DSN='...'`.
+Agents write the DSN to `.env` before the first database command. `--dsn-env DBTALK_DSN_*` reads the process environment first and only falls back to the current `.env` when that variable is absent.
 
 ## Commands
 
@@ -73,7 +74,7 @@ mysql+pymysql://user:password@host:3306/app
 postgresql+psycopg://user:password@host:5432/app
 ```
 
-Every command accepts exactly one of `--dsn DSN` or `--dsn-env NAME`. Defaults are in [dbtalk.yaml](dbtalk.yaml) and can be overridden with `DBTALK_` environment variables.
+Every command accepts exactly one of `--dsn DSN` or `--dsn-env NAME`; `--dsn` remains available for direct integrations. Agent workflows must plan a `DBTALK_DSN_*` name, write the value to the current `.env`, and use only `--dsn-env`. `.env.local` and other dotenv variants are not loaded. Defaults are in [dbtalk.yaml](dbtalk.yaml) and can be overridden with `DBTALK_` process environment variables.
 
 ## Documentation
 
@@ -85,7 +86,7 @@ Every command accepts exactly one of `--dsn DSN` or `--dsn-env NAME`. Defaults a
 
 The repository ships a `dbtalk` plugin for Codex, Claude, and Grok with three skills:
 
-- `dbtalk-database`: SQL and JSONL data transfer
+- `dbtalk`: SQL and JSONL data transfer
 - `dbtalk-mysql`: MySQL schemas, users, permissions, and dump/restore
 - `dbtalk-postgres`: PostgreSQL schemas, roles, permissions, and dump/restore
 

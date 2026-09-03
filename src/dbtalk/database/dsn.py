@@ -23,7 +23,7 @@ ASYNC_DRIVERS = {
     "mysql": "mysql+asyncmy",
     "postgresql": "postgresql+psycopg",
 }
-DOTENV_DSN_PREFIX = "DBTALK_"
+DOTENV_DSN_PREFIX = "DBTALK_DSN_"
 
 
 @dataclass(frozen=True)

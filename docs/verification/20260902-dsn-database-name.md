@@ -23,7 +23,7 @@ standard 模式不创建单独的 Spec，本次按已接受的 Plan 核对。
 
 - Plan 中的 DSN parser、transfer、MySQL、PostgreSQL、文档、skill 和测试文件均有对应实际变更。
 - `src/dbtalk/postgres/database.py` 与 `tests/test_database_administration.py` 是 Plan 第 5 步要求审阅并补充的 PostgreSQL `schema drop` 局部安全校验，属于计划内增量。
-- Plan 的真实服务验证要求已在现有 `.env` 的 `DBTALK_MYSQL_DSN`、`DBTALK_POSTGRES_DSN` 上完成；两个实际 DSN 都省略 URL database path。
+- Plan 的真实服务验证要求已在现有 `.env` 的 `DBTALK_DSN_MYSQL`、`DBTALK_DSN_POSTGRES` 上完成；两个实际 DSN 都省略 URL database path。
 
 ## Actual diff summary
 
@@ -68,7 +68,7 @@ Plan 预期的核心源码、测试、用户文档和 plugin skill 均已修改�
 
 ## Real integration
 
-使用当前目录 `.env` 中的 `DBTALK_MYSQL_DSN` 与 `DBTALK_POSTGRES_DSN`，命令通过 `--dsn-env` 加载；未在输出、日志或文档中回显 DSN。
+使用当前目录 `.env` 中的 `DBTALK_DSN_MYSQL` 与 `DBTALK_DSN_POSTGRES`，命令通过 `--dsn-env` 加载；未在输出、日志或文档中回显 DSN。
 
 - 两个 DSN 的 database path 都为空。`dbtalk query` 分别在 MySQL 与 PostgreSQL 上执行 `SELECT 1 AS reachable`，均返回 `reachable=1`。
 - MySQL 与 PostgreSQL 的 `query` 走源码中的 read-only transaction；本次未执行 `exec --write`、import、restore、schema/user/role/permissions 管理或任何 DDL/DML。

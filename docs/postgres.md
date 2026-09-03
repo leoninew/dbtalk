@@ -22,13 +22,13 @@ uv run dbtalk postgres permissions --help
 
 ## DSN 与客户端
 
-所有命令必须且只能提供一个 `--dsn DSN` 或 `--dsn-env NAME`。PostgreSQL DSN 必须使用明确的 `postgresql+psycopg://` 格式：
+所有命令必须且只能提供一个 `--dsn DSN` 或 `--dsn-env NAME`。PostgreSQL DSN 必须使用明确的 `postgresql+psycopg://` 格式。`--dsn` 保留给直接集成；Agent 将 DSN 写入当前目录 `.env` 的 `DBTALK_DSN_*`，并只使用 `--dsn-env`：
 
-```bash
-export APP_DSN='postgresql+psycopg://backup:password@db.example.com:5432/app?sslmode=require'
+```dotenv
+DBTALK_DSN_APP=postgresql+psycopg://backup:password@db.example.com:5432/app?sslmode=require
 ```
 
-脚本中优先使用 `--dsn-env`，避免密码出现在进程参数中。`dbtalk` 向 native client 传递无密码的 libpq URI；本机客户端读取临时 `.pgpass`，Docker client 通过子进程环境读取密码。正常输出、日志和错误摘要不会回显密码。
+`dbtalk` 向 native client 传递无密码的 libpq URI；本机客户端读取临时 `.pgpass`，Docker client 通过子进程环境读取密码。正常输出、日志和错误摘要不会回显密码。`.env.local` 或其他 dotenv 变体不会被加载。
 
 PostgreSQL URL 的 database path 在语法上可省略。`schema list/create`、role 和权限查看可使用这种 DSN；`schema drop` 必须带有维护 database 以避免删除当前连接数据库。dump/restore 的目标按 `--database > DSN database > 失败` 决定；grant/revoke 未显式给出 `--database` 或 `--schema` 时仍需要 DSN database。
 
@@ -48,12 +48,14 @@ postgres:
 
 `schema` 子命令管理 PostgreSQL schema/database，不执行任意 SQL、不管理 role，也不替代 dump/restore。`list` 与 `create` 的管理 DSN 可以省略 database path；`drop` 必须连接到目标以外的维护 database，通常为 `postgres`。账号还需要相应的建库或删库权限。
 
-```bash
-export POSTGRES_MANAGEMENT_DSN='postgresql+psycopg://operator:password@db.example.com:5432/postgres'
+```dotenv
+DBTALK_DSN_POSTGRES_MANAGEMENT=postgresql+psycopg://operator:password@db.example.com:5432/postgres
+```
 
-uv run dbtalk postgres schema list --dsn-env POSTGRES_MANAGEMENT_DSN
-uv run dbtalk postgres schema create --dsn-env POSTGRES_MANAGEMENT_DSN --name app_db
-uv run dbtalk postgres schema drop --dsn-env POSTGRES_MANAGEMENT_DSN --name app_db --yes
+```bash
+uv run dbtalk postgres schema list --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT
+uv run dbtalk postgres schema create --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT --name app_db
+uv run dbtalk postgres schema drop --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT --name app_db --yes
 ```
 
 `list` 输出非模板、可连接的数据库。`create` 使用服务端默认创建属性。`drop` 是不可逆操作，必须显式提供 `--yes`，且不能删除管理 DSN 正在连接的数据库。存在其他连接、权限不足或服务器策略限制时，命令会失败；首版不会主动终止其他会话。
@@ -62,7 +64,7 @@ uv run dbtalk postgres schema drop --dsn-env POSTGRES_MANAGEMENT_DSN --name app_
 
 ```bash
 uv run dbtalk postgres dump \
-  --dsn-env APP_DSN \
+  --dsn-env DBTALK_DSN_APP \
   --database app \
   --output ./data/app.dump \
   --compression-level 6
@@ -76,7 +78,7 @@ custom archive 具有 PostgreSQL 原生内部压缩，不能等同于 `.sql.gz`�
 
 ```bash
 uv run dbtalk postgres restore \
-  --dsn-env APP_DSN \
+  --dsn-env DBTALK_DSN_APP \
   --database app \
   --input ./data/app.dump \
   --clean \
@@ -98,16 +100,17 @@ uv run dbtalk postgres restore \
 
 `dbtalk postgres role` 管理具备 `LOGIN` 的 PostgreSQL role；`dbtalk postgres grant` 和 `revoke` 与 role 命令同级。所有管理命令使用管理 DSN，且必须在 `--dsn` 和 `--dsn-env` 间二选一。
 
-```bash
-export POSTGRES_ADMIN_DSN='postgresql+psycopg://admin:password@db.example:5432/app'
-export APP_PASSWORD='application-password'
+```dotenv
+DBTALK_DSN_POSTGRES_ADMIN=postgresql+psycopg://admin:password@db.example:5432/app
+```
 
-uv run dbtalk postgres role create --dsn-env POSTGRES_ADMIN_DSN \
+```bash
+uv run dbtalk postgres role create --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
   --role app_role --password-env APP_PASSWORD
-uv run dbtalk postgres grant --dsn-env POSTGRES_ADMIN_DSN \
+uv run dbtalk postgres grant --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
   --role app_role --schema app --profile readwrite --yes
 
-uv run dbtalk postgres grant --dsn-env POSTGRES_ADMIN_DSN \
+uv run dbtalk postgres grant --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
   --role app_role --schema app --privilege USAGE \
   --privilege CREATE --yes
 ```
@@ -117,8 +120,8 @@ uv run dbtalk postgres grant --dsn-env POSTGRES_ADMIN_DSN \
 授权目标支持 database 或 schema，未指定时使用 DSN database。profile 按 `migrator > readwrite > readonly` 包含：`readonly` 提供基础只读权限；以 schema 为目标时，`readwrite` 再提供现有表的 `SELECT, INSERT, UPDATE, DELETE` 以及 sequence 的 `USAGE, SELECT, UPDATE`；`migrator` 再授予 schema `CREATE`，并在 database 目标上授予 `CREATE`，同时设置 role 的全局 `CREATEDB` 属性以允许建库。`CREATEDB` 不是某个 database/schema 上的普通授权，撤销 `migrator` 会将该 role 设为 `NOCREATEDB`。固定 profile 不添加 `GRANT OPTION` 或角色管理能力。schema profile 不修改 default privileges，因此不会自动覆盖未来创建的表或序列；migrator 必须拥有它需要 `ALTER` 或 `DROP` 的现有对象。
 
 ```bash
-uv run dbtalk postgres permissions list --dsn-env POSTGRES_ADMIN_DSN
-uv run dbtalk postgres permissions show --dsn-env POSTGRES_ADMIN_DSN --role app_role
+uv run dbtalk postgres permissions list --dsn-env DBTALK_DSN_POSTGRES_ADMIN
+uv run dbtalk postgres permissions show --dsn-env DBTALK_DSN_POSTGRES_ADMIN --role app_role
 ```
 
 `permissions list` 默认展示当前 DSN 可见的原生权限，可按 role、database、schema 筛选；`show` 查看一个 role，资源筛选可选。输出直接来自 PostgreSQL 原生权限查询。

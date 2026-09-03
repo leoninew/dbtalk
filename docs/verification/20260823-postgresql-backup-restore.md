@@ -75,7 +75,7 @@ git diff --check                                                  passed
 
 CLI 合同检查通过：`postgres dump --help` 展示 custom archive 和 compression 参数，`postgres restore --help` 展示 `--clean`、`--if-exists`、owner/ACL 和 `--jobs`。
 
-本次触碰的 Python 文件通过 Ruff format check。全仓库 format check 仍报告既有的 `tests/test_backup_databases.py` 格式差异；该文件与本次变更无关，因此未修改。
+本次触碰的 Python 文件通过 Ruff format check。全仓库 format check 仍报告既有的 `tests/test_backup_db.py` 格式差异；该文件与本次变更无关，因此未修改。
 
 ### Mapped-container coverage
 

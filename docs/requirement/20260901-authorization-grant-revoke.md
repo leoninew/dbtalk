@@ -39,7 +39,7 @@ Stage: Requirement
 
    ```bash
    dbtalk postgres grant \
-     --dsn-env POSTGRES_ADMIN_DSN \
+     --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
      --role app_role \
      --schema app \
      --profile readonly \
@@ -50,7 +50,7 @@ Stage: Requirement
 
    ```bash
    dbtalk postgres grant \
-     --dsn-env POSTGRES_ADMIN_DSN \
+     --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
      --role app_role \
      --schema app \
      --privilege create \

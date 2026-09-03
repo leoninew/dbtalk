@@ -66,7 +66,7 @@ Plan 预期修改的源码、配置、文档和测试文件均已覆盖；另外
 
 仓库全量测试中的手工集成函数仍按默认配置跳过；此前已用独立实际 CLI 流程完成本地 3306 dump、create、restore 和校验。由于本地客户端不支持 `--skip-definer`，未能验证该选项成功生成制品，仅验证了清晰失败和无制品发布行为。
 
-本次新增的 mapped-container restore 已由定向测试覆盖；由于当前验证进程没有 `DBTALK_IT_DSN` 且 `.env` 未提供该变量，尚未重新执行新增代码的真实 Docker restore。宿主机仍未安装 `mysql`/`mysqldump`。
+本次新增的 mapped-container restore 已由定向测试覆盖；由于当前验证进程没有 `DBTALK_DSN_IT` 且 `.env` 未提供该变量，尚未重新执行新增代码的真实 Docker restore。宿主机仍未安装 `mysql`/`mysqldump`。
 
 ## Risks and incomplete items
 

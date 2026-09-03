@@ -1,4 +1,4 @@
-# Copy this file to backup_databases.yaml and fill in the DSNs.
+# Copy this file to backup_db.yaml and fill in the DSNs.
 output_directory: ../data
 target_validation:
   # Maximum database connection time for each configured connection.

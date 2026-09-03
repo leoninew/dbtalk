@@ -26,23 +26,24 @@ uv run dbtalk --help
 
 ## 快速开始
 
-建议通过环境变量传入连接信息，避免密码出现在命令历史中：
+将连接信息保存到当前目录 `.env`，命令中只引用变量名：
+
+```dotenv
+DBTALK_DSN_APP=sqlite:///./data/app.db
+```
 
 ```bash
-mkdir -p data
-export APP_DSN='sqlite:///./data/app.db'
-
 uv run dbtalk query \
-  --dsn-env APP_DSN \
+  --dsn-env DBTALK_DSN_APP \
   --sql 'SELECT 1 AS ok'
 
 uv run dbtalk exec \
   --write \
-  --dsn-env APP_DSN \
+  --dsn-env DBTALK_DSN_APP \
   --sql 'CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)'
 ```
 
-Bash 使用 `export APP_DSN='...'` 设置环境变量。
+Agent 在第一条数据库命令前将 DSN 写入 `.env`。`--dsn-env DBTALK_DSN_*` 优先读取进程环境变量，只有变量不存在时才从当前目录 `.env` 回退读取。
 
 ## 命令
 
@@ -73,7 +74,7 @@ mysql+pymysql://user:password@host:3306/app
 postgresql+psycopg://user:password@host:5432/app
 ```
 
-每个命令必须在 `--dsn DSN` 和 `--dsn-env NAME` 中选择一个。默认配置位于 [dbtalk.yaml](dbtalk.yaml)，可使用 `DBTALK_` 前缀的环境变量覆盖。
+每个命令必须在 `--dsn DSN` 和 `--dsn-env NAME` 中选择一个；`--dsn` 保留给直接集成。Agent 必须先规划 `DBTALK_DSN_*` 名称，将 DSN 写入当前目录 `.env`，随后只使用 `--dsn-env`。不会加载 `.env.local` 或其他 dotenv 变体。默认配置位于 [dbtalk.yaml](dbtalk.yaml)，可使用 `DBTALK_` 前缀的进程环境变量覆盖。
 
 ## 文档
 
@@ -85,7 +86,7 @@ postgresql+psycopg://user:password@host:5432/app
 
 仓库包含一个可供 Codex、Claude 和 Grok 使用的 `dbtalk` plugin，提供三个 skills：
 
-- `dbtalk-database`：通用 SQL 和 JSONL 数据传输
+- `dbtalk`：通用 SQL 和 JSONL 数据传输
 - `dbtalk-mysql`：MySQL schema、用户、权限和 dump/restore
 - `dbtalk-postgres`：PostgreSQL schema、role、权限和 dump/restore
 

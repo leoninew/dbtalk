@@ -91,7 +91,7 @@ def test_dsn_rejects_invalid_or_unsupported_values() -> None:
     with pytest.raises(DatabaseOperationError, match="sqlite DSN"):
         parse_dsn("sqlite://")
     with pytest.raises(DatabaseOperationError, match="environment variable"):
-        dsn_from_environment("DBTALK_MISSING_DSN")
+        dsn_from_environment("DBTALK_DSN_MISSING")
     with pytest.raises(DatabaseOperationError, match="DSN is invalid"):
         parse_dsn("mysql+pymysql://user:pass@host:bad/app")
 
@@ -120,48 +120,62 @@ def test_dsn_requires_explicit_driver_and_validates_metadata(
         parse_dsn("mysql+pymysql://user:pass@host:0/app")
     with pytest.raises(DatabaseOperationError, match="--dsn-env is required"):
         dsn_from_environment(None)
-    monkeypatch.delenv("DBTALK_MISSING_DSN", raising=False)
+    monkeypatch.delenv("DBTALK_DSN_MISSING", raising=False)
 
 
-def test_dsn_from_environment_reads_current_dotenv_for_dbtalk_names(
+def test_dsn_from_environment_reads_current_dotenv_for_dbtalk_dsn_names(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (tmp_path / ".env").write_text(
-        "DBTALK_APP_DSN=sqlite:///:memory:\n",
+        "DBTALK_DSN_APP=sqlite:///:memory:\n",
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("DBTALK_APP_DSN", raising=False)
+    monkeypatch.delenv("DBTALK_DSN_APP", raising=False)
 
-    assert dsn_from_environment("DBTALK_APP_DSN").url.drivername == "sqlite"
+    assert dsn_from_environment("DBTALK_DSN_APP").url.drivername == "sqlite"
+
+
+def test_dsn_from_environment_ignores_dotenv_variants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / ".env.local").write_text(
+        "DBTALK_DSN_APP=sqlite:///:memory:\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("DBTALK_DSN_APP", raising=False)
+
+    with pytest.raises(DatabaseOperationError, match="environment variable is not set"):
+        dsn_from_environment("DBTALK_DSN_APP")
 
 
 def test_dsn_from_environment_prefers_process_value_over_dotenv(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (tmp_path / ".env").write_text(
-        "DBTALK_APP_DSN=postgresql+psycopg://user:secret@dotenv.example/app\n",
+        "DBTALK_DSN_APP=postgresql+psycopg://user:secret@dotenv.example/app\n",
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("DBTALK_APP_DSN", "sqlite:///:memory:")
+    monkeypatch.setenv("DBTALK_DSN_APP", "sqlite:///:memory:")
 
-    assert dsn_from_environment("DBTALK_APP_DSN").dialect == "sqlite"
+    assert dsn_from_environment("DBTALK_DSN_APP").dialect == "sqlite"
 
 
-def test_dsn_from_environment_does_not_fallback_for_empty_or_non_dbtalk_names(
+def test_dsn_from_environment_does_not_fallback_for_empty_or_non_dsn_names(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (tmp_path / ".env").write_text(
-        "DBTALK_APP_DSN=sqlite:///:memory:\nAPP_DSN=sqlite:///:memory:\n",
+        "DBTALK_DSN_APP=sqlite:///:memory:\nAPP_DSN=sqlite:///:memory:\n",
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("DBTALK_APP_DSN", "")
+    monkeypatch.setenv("DBTALK_DSN_APP", "")
     monkeypatch.delenv("APP_DSN", raising=False)
 
     with pytest.raises(DatabaseOperationError, match="environment variable is not set"):
-        dsn_from_environment("DBTALK_APP_DSN")
+        dsn_from_environment("DBTALK_DSN_APP")
     with pytest.raises(DatabaseOperationError, match="environment variable is not set"):
         dsn_from_environment("APP_DSN")
 
@@ -396,16 +410,16 @@ def test_canonical_dsn_transfer_validation_and_environment(tmp_path: Path) -> No
             validate_connection(TransferConnection(driver, dsn=database_free_dsn))
     monkeypatch = pytest.MonkeyPatch()
     try:
-        monkeypatch.setenv("DBTALK_CANONICAL_DSN", dsn)
-        assert dsn_from_environment("DBTALK_CANONICAL_DSN").dialect == "sqlite"
+        monkeypatch.setenv("DBTALK_DSN_CANONICAL", dsn)
+        assert dsn_from_environment("DBTALK_DSN_CANONICAL").dialect == "sqlite"
         assert query_from_environment(
-            "DBTALK_CANONICAL_DSN",
+            "DBTALK_DSN_CANONICAL",
             "SELECT 1",
             timeout_seconds=30,
         ).rows == ((1,),)
         assert (
             execute_from_environment(
-                "DBTALK_CANONICAL_DSN",
+                "DBTALK_DSN_CANONICAL",
                 "CREATE TABLE another (id INTEGER)",
                 timeout_seconds=30,
             ).row_count
@@ -554,7 +568,7 @@ def test_query_and_exec_cli_use_dsn_environment(
 ) -> None:
     path = tmp_path / "cli.db"
     create_database(path)
-    monkeypatch.setenv("DBTALK_QUERY_DSN", f"sqlite:///{path.as_posix()}")
+    monkeypatch.setenv("DBTALK_DSN_QUERY", f"sqlite:///{path.as_posix()}")
     runner = CliRunner()
 
     query = runner.invoke(
@@ -562,7 +576,7 @@ def test_query_and_exec_cli_use_dsn_environment(
         [
             "query",
             "--dsn-env",
-            "DBTALK_QUERY_DSN",
+            "DBTALK_DSN_QUERY",
             "--sql",
             "SELECT name FROM users WHERE id = :id",
             "--param",
@@ -595,7 +609,7 @@ def test_query_and_exec_cli_use_dsn_environment(
             "exec",
             "--write",
             "--dsn-env",
-            "DBTALK_QUERY_DSN",
+            "DBTALK_DSN_QUERY",
             "--sql",
             "UPDATE users SET name = :name WHERE id = :id",
             "--param",

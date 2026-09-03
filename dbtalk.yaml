@@ -1,4 +1,4 @@
-# Defaults. Use .env.<DBTALK_ENVKEY> or DBTALK_* variables for local overrides.
+# Defaults. Use DBTALK_* process environment variables for local overrides.
 verbose: false
 
 logging:

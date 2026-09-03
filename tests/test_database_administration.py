@@ -211,10 +211,10 @@ def test_management_dsn_resolution_is_strict_and_dialect_specific(
         )
 
     monkeypatch.setenv(
-        "DBTALK_MYSQL_MANAGEMENT_DSN", "mysql+pymysql://admin:secret@db.example/mysql"
+        "DBTALK_DSN_MYSQL_MANAGEMENT", "mysql+pymysql://admin:secret@db.example/mysql"
     )
     assert (
-        mysql_database.resolve_management_dsn(None, "DBTALK_MYSQL_MANAGEMENT_DSN").dialect
+        mysql_database.resolve_management_dsn(None, "DBTALK_DSN_MYSQL_MANAGEMENT").dialect
         == "mysql"
     )
 

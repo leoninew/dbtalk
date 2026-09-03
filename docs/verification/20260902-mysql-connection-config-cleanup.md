@@ -61,8 +61,8 @@ Stage: Verification
 | --- | --- |
 | `make check` | 通过：Ruff format、Ruff lint、mypy 均通过。 |
 | `make test` | 通过：238 passed。 |
-| `uv run --locked --no-sync dbtalk query --dsn-env DBTALK_MYSQL_DSN --sql 'SELECT 1' --format json` | 通过。 |
-| `uv run --locked --no-sync dbtalk query --dsn-env DBTALK_POSTGRES_DSN --sql 'SELECT 1' --format json` | 通过。 |
+| `uv run --locked --no-sync dbtalk query --dsn-env DBTALK_DSN_MYSQL --sql 'SELECT 1' --format json` | 通过。 |
+| `uv run --locked --no-sync dbtalk query --dsn-env DBTALK_DSN_POSTGRES --sql 'SELECT 1' --format json` | 通过。 |
 
 ## Risks and incomplete items
 

@@ -18,7 +18,7 @@ Stage: Plan
 - 删除 dump/restore 手工集成测试，仅保留并补齐单元测试；不得以真实服务测试替代该约束，也不得修改已有数据库、用户或数据。
 - `plugins/dbtalk` 的同步不属于本任务；源码、配置样例、用户文档和测试先收敛，plugin 后续按用户指令单独同步。
 - query/exec 的单条 SQL timeout 分别进入根 `Settings`。MySQL 进度日志采样和 tooling 外部 CLI timeout 不进入应用设置。
-- `scripts/backup_databases.py` 及其 YAML 独立于 `dbtalk` 主配置和应用业务。
+- `scripts/backup_db.py` 及其 YAML 独立于 `dbtalk` 主配置和应用业务。
 
 ## Time policy design
 
@@ -83,16 +83,16 @@ Stage: Plan
 - `src/dbtalk/postgres/dump.py`
 - `dbtalk.yaml`
 - `.env.example`
-- `scripts/backup_databases.py`
-- `scripts/backup_databases.yaml`
-- `scripts/backup_databases.example.yaml`
+- `scripts/backup_db.py`
+- `scripts/backup_db.yaml`
+- `scripts/backup_db.example.yaml`
 - `docs/mysql.md`
 - `docs/database.md`
 - `docs/postgres.md`
 - `tests/test_database_transfer.py`
 - `tests/test_settings.py`
 - `tests/test_unit_boundaries.py`
-- `tests/test_backup_databases.py`
+- `tests/test_backup_db.py`
 - `tests/test_mysql.py`
 - `tests/test_postgres.py`
 - `tests/test_manual_integration.py` (删除)

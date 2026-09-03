@@ -27,7 +27,7 @@ light 模式不创建独立 Spec 或 Plan。实际实现按 Requirement 的 Deci
 | --- | --- |
 | Codex/Claude manifests | `plugins/dbtalk/.codex-plugin/plugin.json`、`plugins/dbtalk/.claude-plugin/plugin.json` |
 | Codex/Grok 与 Claude marketplace | `.agents/plugins/marketplace.json`、`.claude-plugin/marketplace.json` |
-| 共享 skills | `plugins/dbtalk/skills/dbtalk-mysql/SKILL.md`、`dbtalk-postgres/SKILL.md`、`dbtalk-database/SKILL.md` |
+| 共享 skills | `plugins/dbtalk/skills/dbtalk/SKILL.md`、`dbtalk-mysql/SKILL.md`、`dbtalk-postgres/SKILL.md` |
 | 使用与维护说明 | `plugins/dbtalk/README.md`、`docs/codex.md` |
 | 防漂移测试 | `tests/test_plugin_packaging.py` |
 

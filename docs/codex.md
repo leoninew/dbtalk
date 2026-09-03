@@ -1,6 +1,6 @@
 # Agent 插件与 Skills
 
-本项目将 `dbtalk` 作为本地 Agent 插件发布，并让 Codex、Claude 与 Grok 共用同一份数据库操作 skill。Codex 使用 [`plugins/dbtalk/.codex-plugin/plugin.json`](../plugins/dbtalk/.codex-plugin/plugin.json)，Claude 使用 [`plugins/dbtalk/.claude-plugin/plugin.json`](../plugins/dbtalk/.claude-plugin/plugin.json)，Grok 兼容 Claude manifest 并从 [`.agents/plugins/marketplace.json`](../.agents/plugins/marketplace.json) 发现仓库插件。Codex/Grok 市场清单位于 [`.agents/plugins/marketplace.json`](../.agents/plugins/marketplace.json)，Claude 市场清单位于 [`.claude-plugin/marketplace.json`](../.claude-plugin/marketplace.json)。
+本项目将 `dbtalk` 作为本地 Agent 插件发布，并让 Codex、Claude 与 Grok 共用同一份数据库操作 skill。Codex 使用 [`plugins/dbtalk/.codex-plugin/plugin.json`](../plugins/dbtalk/.codex-plugin/plugin.json)，Claude 使用 [`plugins/dbtalk/.claude-plugin/plugin.json`](../plugins/dbtalk/.claude-plugin/plugin.json)，Grok 使用已验证兼容的 Claude manifest，直接从 `plugins/dbtalk` 目录安装并信任，不经 marketplace。Codex 市场清单位于 [`.agents/plugins/marketplace.json`](../.agents/plugins/marketplace.json)，Claude 市场清单位于 [`.claude-plugin/marketplace.json`](../.claude-plugin/marketplace.json)。
 
 插件不包含独立的数据库实现，所有 skill 均调用发布安装的 `dbtalk` CLI。使用插件前，确保 `dbtalk` 位于 `PATH`；在本仓库开发时可继续使用 `uv run dbtalk`：
 
@@ -12,17 +12,17 @@ uv sync --all-groups
 
 | Skill | 适用任务 | 调用命令 | 参考手册 |
 | --- | --- | --- | --- |
+| [`dbtalk`](../plugins/dbtalk/skills/dbtalk/SKILL.md) | 通用 query/exec，以及 SQLite、MySQL、PostgreSQL 间 JSONL 导出/导入。 | `dbtalk query/exec/export/import` | [数据库手册](database.md) |
 | [`dbtalk-mysql`](../plugins/dbtalk/skills/dbtalk-mysql/SKILL.md) | MySQL schema、user、权限、backup、dump、restore 或导入 `.sql`。 | `dbtalk mysql` | [MySQL 手册](mysql.md) |
 | [`dbtalk-postgres`](../plugins/dbtalk/skills/dbtalk-postgres/SKILL.md) | PostgreSQL schema、role、权限、单库逻辑备份或恢复 custom archive。 | `dbtalk postgres` | [PostgreSQL 手册](postgres.md) |
-| [`dbtalk-database`](../plugins/dbtalk/skills/dbtalk-database/SKILL.md) | 通用 query/exec，以及 SQLite、MySQL、PostgreSQL 间 JSONL 导出/导入。 | `dbtalk query/exec/export/import` | [数据库手册](database.md) |
 
-三个 skill 只在其职责范围内选择命令：原生 MySQL SQL 备份与还原使用 `dbtalk-mysql`；PostgreSQL custom archive 使用 `dbtalk-postgres`；通用 SQL 操作和跨库数据传输使用 `dbtalk-database`。它们不会替代 CLI 的参数校验或配置加载。
+三个 skill 只在其职责范围内选择命令：原生 MySQL SQL 备份与还原使用 `dbtalk-mysql`；PostgreSQL custom archive 使用 `dbtalk-postgres`；通用 SQL 操作和跨库数据传输使用 `dbtalk`。它们不会替代 CLI 的参数校验或配置加载。
 
 ## 操作边界
 
-skills 会先通过相应的 `--help` 确认可用参数，并复用 CLI 的安全约束：凭据应保存在 `.env.local` 或环境变量中，不能出现在命令行示例、日志或 JSONL 制品中。
+skills 会先通过相应的 `--help` 确认可用参数。CLI 保留 `--dsn DSN` 与 `--dsn-env NAME` 的二选一契约，但代理执行只能使用 `--dsn-env`：拿到 DSN 后、第一条 dbtalk 命令前，按范围将 DSN 写入当前目录 `.env`，单应用库为 `DBTALK_DSN_APP`，传输为 `DBTALK_DSN_SOURCE` 与 `DBTALK_DSN_TARGET`，数据库生命周期为方言对应的 `DBTALK_DSN_<DIALECT>_MANAGEMENT`，账号或 role 管理为 `DBTALK_DSN_<DIALECT>_ADMIN`。同一任务复用这些名称，不能传 `--dsn`、`export` DSN、内联 DSN 环境变量或 PowerShell `$env:` DSN。`--dsn-env DBTALK_DSN_*` 先读取同名进程环境变量；只有变量不存在时，才读取当前工作目录 `.env` 的同名值。进程变量存在但为空会失败而不回退，其他名称不会读取 dotenv。CLI 不加载 `.env.local`、其他 dotenv 变体或父目录 dotenv 文件；常规配置只来自 `dbtalk.yaml` 和 `DBTALK_*` 进程环境变量。凭据不能出现在命令行、日志、JSONL 制品或 `.env.example` 中。
 
-`dbtalk-mysql` 的 dump/restore 使用本机客户端，或回退到本机已有 Docker `mysql` 镜像；数据库管理命令不调用这些客户端。`dbtalk-database` 仅传输既有 schema 的数据；导入前必须明确目标库、制品来源和写入授权。
+`dbtalk-mysql` 的 dump/restore 使用本机客户端，或回退到本机已有 Docker `mysql` 镜像；数据库管理命令不调用这些客户端。`dbtalk` 仅传输既有 schema 的数据；导入前必须明确目标库、制品来源和写入授权。
 
 `dbtalk-postgres` 对本机 DSN 的唯一端口映射容器优先复用其 `docker exec` 和默认 Unix socket；未识别到唯一映射容器时使用本机 `pg_dump` / `pg_restore`，缺失时只使用配置的本地 PostgreSQL Docker image（默认 `postgres:18`）；不会拉取 image。它只处理 custom archive，不等同于 PostgreSQL 的物理备份或 JSONL 数据传输。`dbtalk-postgres schema` 独立处理 PostgreSQL database 生命周期，不调用 `pg_dump` / `pg_restore`。
 

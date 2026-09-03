@@ -81,7 +81,7 @@ Review status: Accepted
 
 - 逐项确认 `mysqldump`、`mysqlrestore` 是否仍需要输出目录、客户端选择、制品存储或其他非连接配置；不因当前连接规则改变而假定整组删除。
 - 仅在后续 Requirement 被采纳后，才修改 `dbtalk.yaml`、`.env.example`、`Settings`、loader、设置测试、手工集成测试和相关文档。
-- 保持 `scripts/backup_databases.example.yaml` 的 target DSN 作为独立批量备份输入，除非后续任务明确改变该脚本职责。
+- 保持 `scripts/backup_db.example.yaml` 的 target DSN 作为独立批量备份输入，除非后续任务明确改变该脚本职责。
 
 ## Assumptions and risks
 

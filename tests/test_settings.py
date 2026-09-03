@@ -29,12 +29,8 @@ postgres:
 
 @pytest.fixture(autouse=True)
 def isolate_cli_environment() -> Iterator[None]:
-    """Keep dotenv values loaded by Dynaconf from leaking across tests."""
-    original = {
-        key: value
-        for key, value in os.environ.items()
-        if key == "DBTALK_ENVKEY" or key.startswith("DBTALK_")
-    }
+    """Keep DBTALK configuration environment variables isolated across tests."""
+    original = {key: value for key, value in os.environ.items() if key.startswith("DBTALK_")}
     clear_cli_environment()
     try:
         yield
@@ -88,26 +84,21 @@ def test_mysql_dump_restore_settings_do_not_expose_connection_or_target_fields(
     assert not hasattr(settings.mysql, "database")
 
 
-def test_dotenv_overrides_yaml(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+def test_settings_do_not_load_dotenv_files(tmp_path: Path) -> None:
     write_settings(tmp_path)
-    (tmp_path / ".env.local").write_text(
-        "DBTALK_MYSQL__CLIENT_IMAGE=dotenv.example/mysql:9\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("DBTALK_ENVKEY", "local")
+    for dotenv_name in (".env", ".env.local"):
+        (tmp_path / dotenv_name).write_text(
+            "DBTALK_MYSQL__CLIENT_IMAGE=dotenv.example/mysql:9\n",
+            encoding="utf-8",
+        )
 
     settings = load_settings(tmp_path)
 
-    assert settings.mysql.client_image == "dotenv.example/mysql:9"
+    assert settings.mysql.client_image == "mysql:8.0.39"
 
 
-def test_os_environment_overrides_dotenv(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+def test_os_environment_overrides_yaml(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     write_settings(tmp_path)
-    (tmp_path / ".env.local").write_text(
-        "DBTALK_MYSQL__CLIENT_IMAGE=dotenv.example/mysql:9\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("DBTALK_ENVKEY", "local")
     monkeypatch.setenv("DBTALK_MYSQL__CLIENT_IMAGE", "os.example/mysql:9")
 
     settings = load_settings(tmp_path)
@@ -172,23 +163,19 @@ def test_frozen_binary_loads_embedded_config_and_executable_overrides(
         "mysql:\n  client_image: executable.example/mysql:9\n",
         encoding="utf-8",
     )
-    (executable_root / ".env.local").write_text(
-        "DBTALK_POSTGRES__CLIENT_IMAGE=dotenv.example/postgres:19\n",
-        encoding="utf-8",
-    )
     executable = executable_root / "dbtalk.exe"
     executable.touch()
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "_MEIPASS", str(bundle_root), raising=False)
     monkeypatch.setattr(sys, "executable", str(executable))
-    monkeypatch.setenv("DBTALK_ENVKEY", "local")
+    monkeypatch.setenv("DBTALK_POSTGRES__CLIENT_IMAGE", "os.example/postgres:19")
 
     settings = load_settings()
 
     assert settings.mysql.client_image == "executable.example/mysql:9"
     assert settings.database.query_timeout_seconds == 61
     assert settings.database.exec_timeout_seconds == 30
-    assert settings.postgres.client_image == "dotenv.example/postgres:19"
+    assert settings.postgres.client_image == "os.example/postgres:19"
 
 
 def write_settings(path: Path) -> None:

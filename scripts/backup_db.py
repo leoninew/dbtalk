@@ -24,7 +24,7 @@ from sqlalchemy.exc import ArgumentError
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPOSITORY_ROOT = SCRIPT_DIR.parent
-DEFAULT_CONFIG_PATH = SCRIPT_DIR / "backup_databases.yaml"
+DEFAULT_CONFIG_PATH = SCRIPT_DIR / "backup_db.yaml"
 ENV_PREFIX = "DBTALK"
 Engine = Literal["mysql", "postgres"]
 DSN_CREDENTIALS_PATTERN = re.compile(
@@ -122,7 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--config",
         type=Path,
         default=DEFAULT_CONFIG_PATH,
-        help="Backup YAML path (default: scripts/backup_databases.yaml).",
+        help="Backup YAML path (default: scripts/backup_db.yaml).",
     )
     test_parser.add_argument(
         "--dbtalk-command",
@@ -477,7 +477,7 @@ def run_dump(
     destination: Path,
     environment: Mapping[str, str] | None = None,
 ) -> None:
-    dsn_env = "DBTALK_BACKUP_DSN"
+    dsn_env = "DBTALK_DSN_BACKUP"
     command = [
         dbtalk,
         target.engine,
@@ -521,7 +521,7 @@ def run_connection_test(
     connection_timeout_seconds: int,
     environment: Mapping[str, str] | None = None,
 ) -> bool:
-    dsn_env = "DBTALK_BACKUP_DSN"
+    dsn_env = "DBTALK_DSN_BACKUP"
     command = [
         dbtalk,
         "query",

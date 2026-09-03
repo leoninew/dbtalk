@@ -1,6 +1,6 @@
 # MySQL 手册
 
-`dbtalk mysql` 用于管理 MySQL 数据库，以及创建和还原原生 SQL dump。每个子命令都必须接受且只接受一个 canonical `--dsn DSN` 或 `--dsn-env NAME`。
+`dbtalk mysql` 用于管理 MySQL 数据库，以及创建和还原原生 SQL dump。每个子命令都必须接受且只接受一个 canonical `--dsn DSN` 或 `--dsn-env NAME`；Agent 工作流只使用 `--dsn-env`。
 
 ```bash
 uv run dbtalk mysql --help
@@ -24,29 +24,36 @@ uv run dbtalk mysql permissions --help
 
 MySQL 命令只接受明确的 `mysql+pymysql://` DSN：
 
+按用途将 DSN 写入当前目录 `.env`：
+
+```dotenv
+DBTALK_DSN_APP=mysql+pymysql://user:password@host:3306/app
+```
+
 ```bash
 uv run dbtalk mysql dump \
-  --dsn 'mysql+pymysql://user:password@host:3306/app' \
+  --dsn-env DBTALK_DSN_APP \
   --output ./data/app.sql
 
-export APP_DSN='mysql+pymysql://user:password@host:3306/app'
 uv run dbtalk mysql restore \
-  --dsn-env APP_DSN \
+  --dsn-env DBTALK_DSN_APP \
   --input ./data/app.sql.gz
 ```
 
-`mysql://`、`postgresql://`、`postgres://`、Go 风格 DSN 和 host/user/password/database 分散参数都不是 canonical DSN。MySQL URL 的 database path 可省略；dump/restore 的目标随后按 `--database > DSN database > 失败` 决定。完整 DSN 可能包含密码；脚本中优先使用 `--dsn-env`。密码只通过 `MYSQL_PWD` 传递给原生客户端，正常输出不会回显密码。
+`mysql://`、`postgresql://`、`postgres://`、Go 风格 DSN 和 host/user/password/database 分散参数都不是 canonical DSN。MySQL URL 的 database path 可省略；dump/restore 的目标随后按 `--database > DSN database > 失败` 决定。完整 DSN 可能包含密码；Agent 将它写入当前目录 `.env` 后只传 `--dsn-env`。密码只通过 `MYSQL_PWD` 传递给原生客户端，正常输出不会回显密码。
 
 ## Schema management
 
 `schema` 子命令管理 MySQL schema/database 本身，不执行任意 SQL、不管理账号，也不替代 dump/restore。DSN 可省略 database path；所用账号需要相应的 MySQL 数据库管理权限。
 
-```bash
-export MYSQL_MANAGEMENT_DSN='mysql+pymysql://operator:password@db.example.com:3306/mysql'
+```dotenv
+DBTALK_DSN_MYSQL_MANAGEMENT=mysql+pymysql://operator:password@db.example.com:3306/mysql
+```
 
-uv run dbtalk mysql schema list --dsn-env MYSQL_MANAGEMENT_DSN
-uv run dbtalk mysql schema create --dsn-env MYSQL_MANAGEMENT_DSN --name app_db
-uv run dbtalk mysql schema drop --dsn-env MYSQL_MANAGEMENT_DSN --name app_db --yes
+```bash
+uv run dbtalk mysql schema list --dsn-env DBTALK_DSN_MYSQL_MANAGEMENT
+uv run dbtalk mysql schema create --dsn-env DBTALK_DSN_MYSQL_MANAGEMENT --name app_db
+uv run dbtalk mysql schema drop --dsn-env DBTALK_DSN_MYSQL_MANAGEMENT --name app_db --yes
 ```
 
 `list` 输出可见数据库名。`create` 使用服务端默认创建属性。`drop` 是不可逆操作，必须显式提供 `--yes`；失败时命令只报告动作失败，不会输出 DSN 密码。MySQL 的名称、权限和 DDL 行为由服务器决定，执行前确认目标名称和连接账号。
@@ -55,7 +62,7 @@ uv run dbtalk mysql schema drop --dsn-env MYSQL_MANAGEMENT_DSN --name app_db --y
 
 ```bash
 uv run dbtalk mysql dump \
-  --dsn 'mysql+pymysql://user:password@host:3306/' \
+  --dsn-env DBTALK_DSN_APP \
   --database app \
   --output ./data/app.sql \
   --skip-definer \
@@ -78,7 +85,7 @@ dump 的目标按 `--database > DSN database > 失败` 决定。dump 固定使�
 
 ```bash
 uv run dbtalk mysql restore \
-  --dsn 'mysql+pymysql://operator:password@host:3306/maintenance' \
+  --dsn-env DBTALK_DSN_APP \
   --database app \
   --input ./data/app.sql.gz
 ```
@@ -110,16 +117,17 @@ mysql:
 
 `dbtalk mysql user` 管理 MySQL `username@host` account；`dbtalk mysql grant` 和 `revoke` 与 user 命令同级。所有管理命令使用管理 DSN，且必须在 `--dsn` 和 `--dsn-env` 间二选一。管理 DSN 可省略 database path；grant/revoke 未显式给出 `--database` 时仍需要 DSN database 作为资源目标。
 
-```bash
-export MYSQL_ADMIN_DSN='mysql+pymysql://admin:password@db.example:3306/app'
-export APP_PASSWORD='application-password'
+```dotenv
+DBTALK_DSN_MYSQL_ADMIN=mysql+pymysql://admin:password@db.example:3306/app
+```
 
-uv run dbtalk mysql user create --dsn-env MYSQL_ADMIN_DSN \
+```bash
+uv run dbtalk mysql user create --dsn-env DBTALK_DSN_MYSQL_ADMIN \
   --user app_user --host app.example --password-env APP_PASSWORD
-uv run dbtalk mysql grant --dsn-env MYSQL_ADMIN_DSN \
+uv run dbtalk mysql grant --dsn-env DBTALK_DSN_MYSQL_ADMIN \
   --user app_user --host app.example --database app --profile readwrite --yes
 
-uv run dbtalk mysql grant --dsn-env MYSQL_ADMIN_DSN \
+uv run dbtalk mysql grant --dsn-env DBTALK_DSN_MYSQL_ADMIN \
   --user app_user --host app.example --privilege SELECT \
   --privilege UPDATE --yes
 ```
@@ -129,8 +137,8 @@ MySQL user 必须显式提供一个精确 host：`localhost`、单个 DNS 名称
 授权目标 database 可省略，省略时使用 DSN database。profile 按 `migrator > readwrite > readonly` 包含：`readonly` 授予 `SELECT, SHOW VIEW`；`readwrite` 再授予 `INSERT, UPDATE, DELETE`；`migrator` 再授予目标 database 上的 DDL，以及创建 database 所需的全局 `CREATE ON *.*`。MySQL 无法将建库的 `CREATE` 与对象 `CREATE` 分离为两种权限，因此 `migrator` 的建库能力是实例级能力；只应授予受控迁移账号。固定 profile 不包含 `GRANT`、`REVOKE`、`GRANT OPTION` 或其他权限管理能力。也可重复指定 `--privilege NAME` 使用数据库服务端支持的细粒度权限；它与 `--profile` 互斥。
 
 ```bash
-uv run dbtalk mysql permissions list --dsn-env MYSQL_ADMIN_DSN
-uv run dbtalk mysql permissions show --dsn-env MYSQL_ADMIN_DSN --user app_user --host app.example
+uv run dbtalk mysql permissions list --dsn-env DBTALK_DSN_MYSQL_ADMIN
+uv run dbtalk mysql permissions show --dsn-env DBTALK_DSN_MYSQL_ADMIN --user app_user --host app.example
 ```
 
 `permissions list` 默认展示当前 DSN 可见的原生权限，可按账号和 database 筛选；`show` 查看一个精确的 `user@host`。输出直接来自 MySQL 原生权限查询。不支持 `WITH GRANT OPTION`、代理身份或超级用户管理。

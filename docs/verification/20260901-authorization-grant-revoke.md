@@ -28,11 +28,11 @@ Stage: Verification
 - 修正 MySQL `permissions show` 的账号参数绑定，支持 `%` host 且避免 PyMySQL 格式化冲突。
 - 将 MySQL/PostgreSQL 生命周期命令改名为 `schema`，并将通用命令提升到根级。
 - 更新 README、手册、插件 Skill、测试和 Specflow 过程文档。
-- 修复既有 `tests/test_backup_databases.py` 的 Ruff 格式和动态导入模块的 Mypy 类型标注问题，使项目质量门禁可执行。
+- 修复既有 `tests/test_backup_db.py` 的 Ruff 格式和动态导入模块的 Mypy 类型标注问题，使项目质量门禁可执行。
 
 ## Expected vs actual files
 
-计划文件范围内的源代码、测试、文档和 Skill 均已覆盖。实际额外变更仅为修复同一质量门禁中发现的既有 `tests/test_backup_databases.py` 格式/类型问题；未修改其业务行为或测试断言语义。
+计划文件范围内的源代码、测试、文档和 Skill 均已覆盖。实际额外变更仅为修复同一质量门禁中发现的既有 `tests/test_backup_db.py` 格式/类型问题；未修改其业务行为或测试断言语义。
 
 ## Acceptance checklist
 

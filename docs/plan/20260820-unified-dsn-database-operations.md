@@ -113,7 +113,7 @@ dbtalk database import --target sqlite|mysql|postgresql ...
    - 使用临时 SQLite 文件验证 sync/async query、exec、参数类型、空结果、JSON/table 输出和事务回滚；async 测试使用 `pytest-asyncio` 与 `aiosqlite`。
    - 使用 SQLAlchemy dialect 编译或 mock connection 测试 MySQL/PostgreSQL 的参数、identifier、upsert 和类型分支，不要求每次测试启动外部服务。
    - 更新现有 transfer 测试，覆盖 DSN 连接模型、SQLite/MySQL 回归、PostgreSQL schema/type/FK 逻辑以及 `--dsn`/`--dsn-env` 二选一校验。
-   - 增加可选集成 marker：通过 `DBTALK_MYSQL_DSN`、`DBTALK_POSTGRESQL_DSN` 显式启用；未配置时跳过而非失败。
+   - 增加可选集成 marker：通过 `DBTALK_DSN_MYSQL`、`DBTALK_DSN_POSTGRESQL` 显式启用；未配置时跳过而非失败。
 
 7. 更新用户文档和 Codex skill。
    - 更新 `README.md`、`docs/database.md`，说明 DSN、query/exec、输出格式、参数化和凭据策略。
@@ -157,7 +157,7 @@ dbtalk database import --target sqlite|mysql|postgresql ...
 3. sync/async SQLite：验证 query、exec、参数绑定、事务提交/回滚、NULL、日期时间、bytes、空结果和并发 async 调用不直接阻塞事件循环。
 4. dialect 契约：验证 SQLite、MySQL、PostgreSQL DSN 解析、sync/async driver 选择、identifier quoting、insert/upsert SQL 编译和 schema metadata 转换。
 5. JSONL 回归：运行现有 SQLite/MySQL 全量 transfer、gzip、零日期、include/exclude、外键顺序、双遍导入和单表事务测试。
-6. PostgreSQL 集成：在显式提供 `DBTALK_POSTGRESQL_DSN` 时验证普通表、主键/联合主键、外键、常见类型、insert/upsert 和跨库 JSONL；无服务环境明确记录跳过原因。
+6. PostgreSQL 集成：在显式提供 `DBTALK_DSN_POSTGRESQL` 时验证普通表、主键/联合主键、外键、常见类型、insert/upsert 和跨库 JSONL；无服务环境明确记录跳过原因。
 7. MySQL 集成：在已有测试条件下验证当前 export/import；原生 dump/restore 单独运行现有测试，确保不依赖 SQLAlchemy。
 8. 项目级验证：`uv run pytest`、`git diff --check`、`uv build`，确认覆盖率仍达到项目 90% 门槛。
 

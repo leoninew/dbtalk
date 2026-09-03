@@ -68,7 +68,7 @@ Review status: Accepted
 | `postgres.client_image` | 保留 | PostgreSQL 本机 client 不可用时，选择本地 Docker client image；不承载连接身份或目标。 | 不变。 |
 | `mysqldump.host`、`port`、`user`、`password`、`database` | 后续评估 | 它们不能再作为本任务 dump 的连接或 target database 回退；是否仍适合承担其他 dump 配置职责尚未决定。 | 独立任务按字段重新评估，不在本任务删除。 |
 | `mysqlrestore.host`、`port`、`user`、`password`、`database`（整个 `mysqlrestore` 组） | 后续评估 | 它们不能再作为本任务 restore 的连接或 target database 回退；是否保留任何非连接配置由后续任务决定。 | 独立任务按字段重新评估，不在本任务删除。 |
-| `scripts/backup_databases.example.yaml` 的 target DSN | 保留 | 这是批量备份脚本的每目标输入，不是 `dbtalk.yaml` 运行时回退配置；每一项都明确给出自身 DSN 和目标。 | 不迁移、不删除。 |
+| `scripts/backup_db.example.yaml` 的 target DSN | 保留 | 这是批量备份脚本的每目标输入，不是 `dbtalk.yaml` 运行时回退配置；每一项都明确给出自身 DSN 和目标。 | 不迁移、不删除。 |
 
 后续配置任务应一并审查手工集成测试所需的环境变量，但当前不预设其最终名称或迁移方案。
 
@@ -81,7 +81,7 @@ Review status: Accepted
 5. MySQL/PostgreSQL dump 与 restore 都以 `--database > DSN database > 失败` 决定目标；不得以 YAML 或环境变量配置的 database 回退。MySQL dump、PostgreSQL dump 和 PostgreSQL restore 提供 `--database`。
 6. 所有标注“条件必需”或“是”的命令，在业务实际需要明确目标时返回专用、可操作的错误；不依赖通用解析器报错。
 7. PostgreSQL `schema drop`、MySQL/PostgreSQL dump、restore 的安全与目标约束保持不变。
-8. 文档、CLI help、测试与 `dbtalk-database` skill 说明“database name 在 DSN 中可选，命令可另行要求明确目标”，并且不回显凭据。
+8. 文档、CLI help、测试与 `dbtalk` skill 说明“database name 在 DSN 中可选，命令可另行要求明确目标”，并且不回显凭据。
 
 ## Decisions
 

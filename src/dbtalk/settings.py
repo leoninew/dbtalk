@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -13,7 +12,6 @@ from dynaconf import Dynaconf
 
 DEFAULT_MYSQL_PORT = 3306
 ENV_PREFIX = "DBTALK"
-ENV_SELECTOR = f"{ENV_PREFIX}_ENVKEY"
 
 
 @dataclass(frozen=True)
@@ -55,10 +53,8 @@ def default_project_root() -> Path:
 
 
 def load_settings(project_root: Path | None = None) -> Settings:
-    """Load YAML, a selected dotenv file, and ``DBTALK_*`` overrides."""
+    """Load YAML and process ``DBTALK_*`` overrides."""
     root = (project_root or default_project_root()).resolve()
-    environment = os.environ.get(ENV_SELECTOR)
-    dotenv_path = root / f".env.{environment}" if environment else None
     settings_files = bundled_settings_files() if project_root is None else []
     config_path = root / "dbtalk.yaml"
     if config_path.is_file() or not settings_files:
@@ -66,8 +62,7 @@ def load_settings(project_root: Path | None = None) -> Settings:
     config = Dynaconf(
         settings_files=[str(path) for path in settings_files],
         envvar_prefix=ENV_PREFIX,
-        load_dotenv=dotenv_path is not None,
-        dotenv_path=str(dotenv_path) if dotenv_path else None,
+        load_dotenv=False,
         environments=False,
     )
     return Settings(

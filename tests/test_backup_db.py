@@ -11,26 +11,26 @@ from unittest.mock import patch
 
 import pytest
 
-SCRIPT = Path(__file__).parents[1] / "scripts" / "backup_databases.py"
-SPEC = importlib.util.spec_from_file_location("dbtalk_backup_databases", SCRIPT)
+SCRIPT = Path(__file__).parents[1] / "scripts" / "backup_db.py"
+SPEC = importlib.util.spec_from_file_location("dbtalk_backup_db", SCRIPT)
 assert SPEC is not None
 assert SPEC.loader is not None
-backup_databases: Any = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = backup_databases
-SPEC.loader.exec_module(backup_databases)
+backup_db: Any = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = backup_db
+SPEC.loader.exec_module(backup_db)
 
 
 def test_connection_test_uses_a_connection_timeout_without_a_statement_timeout() -> None:
     completed = subprocess.CompletedProcess([], 0, "", "")
 
-    with patch.object(backup_databases.subprocess, "run", return_value=completed) as run:
-        assert backup_databases.run_connection_test("dbtalk", "sqlite:///", 7) is True
+    with patch.object(backup_db.subprocess, "run", return_value=completed) as run:
+        assert backup_db.run_connection_test("dbtalk", "sqlite:///", 7) is True
 
     assert run.call_args.args[0] == [
         "dbtalk",
         "query",
         "--dsn-env",
-        "DBTALK_BACKUP_DSN",
+        "DBTALK_DSN_BACKUP",
         "--sql",
         "SELECT 1",
         "--connect-timeout",
@@ -42,7 +42,7 @@ def test_connection_test_uses_a_connection_timeout_without_a_statement_timeout()
 
 
 def test_run_dump_includes_a_sanitized_dbtalk_diagnostic(tmp_path: Path) -> None:
-    target = backup_databases.BackupTarget(
+    target = backup_db.BackupTarget(
         engine="postgres",
         connection="postgres.example",
         connection_name="primary_postgres",
@@ -58,26 +58,26 @@ def test_run_dump_includes_a_sanitized_dbtalk_diagnostic(tmp_path: Path) -> None
     )
 
     with (
-        patch.object(backup_databases.subprocess, "run", return_value=completed),
+        patch.object(backup_db.subprocess, "run", return_value=completed),
         pytest.raises(
-            backup_databases.BackupError,
+            backup_db.BackupError,
             match=(
                 r"exit_code=1 diagnostic=Error: Docker pg_dump failed: "
                 r"postgresql\+psycopg://<redacted>@postgres\.example/app"
             ),
         ),
     ):
-        backup_databases.run_dump("dbtalk", target, tmp_path / "app.dump")
+        backup_db.run_dump("dbtalk", target, tmp_path / "app.dump")
 
 
 def test_test_parser_uses_a_connection_timeout_destination() -> None:
-    args = backup_databases.build_parser().parse_args(["test", "--connect-timeout", "7"])
+    args = backup_db.build_parser().parse_args(["test", "--connect-timeout", "7"])
 
     assert args.connect_timeout_seconds == 7
 
 
 def test_load_backup_config_builds_each_target_dsn_from_its_connection(tmp_path: Path) -> None:
-    config_path = tmp_path / "backup_databases.yaml"
+    config_path = tmp_path / "backup_db.yaml"
     config_path.write_text(
         "output_directory: backups\n"
         "target_validation:\n"
@@ -96,10 +96,10 @@ def test_load_backup_config_builds_each_target_dsn_from_its_connection(tmp_path:
         encoding="utf-8",
     )
 
-    config = backup_databases.load_backup_config(config_path)
+    config = backup_db.load_backup_config(config_path)
 
     assert config.targets == (
-        backup_databases.BackupTarget(
+        backup_db.BackupTarget(
             engine="mysql",
             connection="mysql.example:3307",
             connection_name="primary_mysql",
@@ -107,7 +107,7 @@ def test_load_backup_config_builds_each_target_dsn_from_its_connection(tmp_path:
             dsn="mysql+pymysql://user:password@mysql.example:3307/app",
             enabled=True,
         ),
-        backup_databases.BackupTarget(
+        backup_db.BackupTarget(
             engine="postgres",
             connection="postgres.example",
             connection_name="primary_postgres",
@@ -117,11 +117,11 @@ def test_load_backup_config_builds_each_target_dsn_from_its_connection(tmp_path:
         ),
     )
     assert config.connections == (
-        backup_databases.BackupConnection(
+        backup_db.BackupConnection(
             name="primary_mysql",
             dsn="mysql+pymysql://user:password@mysql.example:3307/",
         ),
-        backup_databases.BackupConnection(
+        backup_db.BackupConnection(
             name="primary_postgres",
             dsn="postgresql+psycopg://user:password@postgres.example/",
         ),
@@ -129,7 +129,7 @@ def test_load_backup_config_builds_each_target_dsn_from_its_connection(tmp_path:
 
 
 def test_run_tests_runs_once_per_connection_with_its_base_dsn(tmp_path: Path) -> None:
-    config_path = tmp_path / "backup_databases.yaml"
+    config_path = tmp_path / "backup_db.yaml"
     config_path.write_text(
         "output_directory: backups\n"
         "target_validation:\n"
@@ -149,15 +149,15 @@ def test_run_tests_runs_once_per_connection_with_its_base_dsn(tmp_path: Path) ->
         "        enabled: false\n",
         encoding="utf-8",
     )
-    args = backup_databases.build_parser().parse_args(
+    args = backup_db.build_parser().parse_args(
         ["test", "--config", str(config_path), "--connect-timeout", "7"]
     )
 
     with (
-        patch.object(backup_databases, "resolve_command", return_value="dbtalk"),
-        patch.object(backup_databases, "run_connection_test", return_value=True) as run,
+        patch.object(backup_db, "resolve_command", return_value="dbtalk"),
+        patch.object(backup_db, "run_connection_test", return_value=True) as run,
     ):
-        assert backup_databases.run_tests(args) == 0
+        assert backup_db.run_tests(args) == 0
 
     assert run.call_args_list == [
         (("dbtalk", "mysql+pymysql://user:password@mysql.example:3307/", 7),),
@@ -166,7 +166,7 @@ def test_run_tests_runs_once_per_connection_with_its_base_dsn(tmp_path: Path) ->
 
 
 def test_load_backup_config_rejects_a_connection_dsn_with_a_database(tmp_path: Path) -> None:
-    config_path = tmp_path / "backup_databases.yaml"
+    config_path = tmp_path / "backup_db.yaml"
     config_path.write_text(
         "output_directory: backups\n"
         "target_validation:\n"
@@ -180,5 +180,5 @@ def test_load_backup_config_rejects_a_connection_dsn_with_a_database(tmp_path: P
         encoding="utf-8",
     )
 
-    with pytest.raises(backup_databases.BackupError, match="must not include a database name"):
-        backup_databases.load_backup_config(config_path)
+    with pytest.raises(backup_db.BackupError, match="must not include a database name"):
+        backup_db.load_backup_config(config_path)

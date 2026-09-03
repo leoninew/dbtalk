@@ -105,7 +105,8 @@ def configured_release() -> ReleaseConfig:
     if STANDALONE_SKILL_NAME is not None:
         if STANDALONE_SKILL_SOURCE is None:
             raise SyncError(
-                "STANDALONE_SKILL_SOURCE must be configured when STANDALONE_SKILL_NAME is set"
+                "STANDALONE_SKILL_SOURCE must be configured when "
+                "STANDALONE_SKILL_NAME is set"
             )
         skill = SkillConfig(
             name=STANDALONE_SKILL_NAME,
@@ -248,7 +249,9 @@ def select_targets(
         environment = plugin_environment() if isinstance(config, PluginConfig) else {}
         ready.append(ClientTarget(client, executable, environment))
     if missing:
-        raise SyncError("required client commands are unavailable: " + "; ".join(missing))
+        raise SyncError(
+            "required client commands are unavailable: " + "; ".join(missing)
+        )
     if not ready:
         raise SyncError("no selected client command is installed")
     return ready, outcomes
@@ -294,9 +297,13 @@ class CommandRunner:
         except OSError as error:
             raise SyncError(f"could not execute {target.name} CLI") from error
         except subprocess.TimeoutExpired as error:
-            raise SyncError(f"{target.name} CLI timed out while running plugin command") from error
+            raise SyncError(
+                f"{target.name} CLI timed out while running plugin command"
+            ) from error
         if completed.returncode != 0:
-            raise SyncError(f"{target.name} CLI failed while running {' '.join(arguments)}")
+            raise SyncError(
+                f"{target.name} CLI failed while running {' '.join(arguments)}"
+            )
         return completed
 
 
@@ -316,20 +323,21 @@ def manage_plugin(
                 )
         return 1 if any(outcome.status == "failed" for outcome in outcomes) else 0
 
-    plans_by_plugin: list[tuple[PluginConfig, list[ClientPlan]]] = []
+    plans_by_plugin: list[tuple[PluginConfig, Sequence[ClientPlan]]] = []
     for config in configs:
         runner = runners[config.plugin_name]
+        plans: Sequence[ClientPlan]
         if command == "remove":
-            client_plans = [plan_plugin_removal(config, target, runner) for target in targets]
+            plans = [plan_plugin_removal(config, target, runner) for target in targets]
         else:
             validate_plugin_sources(config, (target.name for target in targets))
-            client_plans = [plan_plugin(config, target, runner) for target in targets]
-        plans_by_plugin.append((config, client_plans))
+            plans = [plan_plugin(config, target, runner) for target in targets]
+        plans_by_plugin.append((config, plans))
 
     failed = False
     for target_index, target in enumerate(targets):
-        for config, client_plans in plans_by_plugin:
-            plan = client_plans[target_index]
+        for config, plans in plans_by_plugin:
+            plan = plans[target_index]
             if command == "check":
                 logging.info(
                     "client=%s plugin=%s action=%s",
@@ -369,7 +377,8 @@ def validate_plugin_sources(config: PluginConfig, clients: Iterable[str]) -> Non
         raise SyncError(f"plugin package does not exist: {config.package}")
     if not any((config.package / "skills").glob("*/SKILL.md")):
         raise SyncError(
-            f"plugin package must contain skills/*/SKILL.md: {config.package / 'skills'}"
+            f"plugin package must contain skills/*/SKILL.md: "
+            f"{config.package / 'skills'}"
         )
     if selected & {"claude", "grok"}:
         validate_manifest(
@@ -381,7 +390,9 @@ def validate_plugin_sources(config: PluginConfig, clients: Iterable[str]) -> Non
         manifest = config.package / ".codex-plugin" / "plugin.json"
         data = validate_manifest(manifest, config.plugin_name, "Codex")
         if data.get("skills") != "./skills/":
-            raise SyncError(f"Codex manifest must declare skills as ./skills/: {manifest}")
+            raise SyncError(
+                f"Codex manifest must declare skills as ./skills/: {manifest}"
+            )
     if "claude" in selected:
         validate_marketplace(config, "claude")
     if "codex" in selected:
@@ -404,7 +415,9 @@ def validate_marketplace(config: PluginConfig, client: str) -> None:
     )
     data = read_json(manifest)
     if not isinstance(data, dict) or data.get("name") != marketplace.name:
-        raise SyncError(f"{client} marketplace name must equal PLUGIN_MARKETPLACE_NAME: {manifest}")
+        raise SyncError(
+            f"{client} marketplace name must equal PLUGIN_MARKETPLACE_NAME: {manifest}"
+        )
     if client == "claude":
         owner = data.get("owner")
         if (
@@ -417,7 +430,9 @@ def validate_marketplace(config: PluginConfig, client: str) -> None:
             )
     plugins = data.get("plugins")
     if not isinstance(plugins, list):
-        raise SyncError(f"{client} marketplace plugins must be a JSON array: {manifest}")
+        raise SyncError(
+            f"{client} marketplace plugins must be a JSON array: {manifest}"
+        )
     entries = [
         entry
         for entry in plugins
@@ -425,7 +440,8 @@ def validate_marketplace(config: PluginConfig, client: str) -> None:
     ]
     if len(entries) != 1:
         raise SyncError(
-            f"{client} marketplace must contain exactly one plugin named {config.plugin_name}"
+            f"{client} marketplace must contain exactly one plugin "
+            f"named {config.plugin_name}"
         )
     source = marketplace_source_path(entries[0], client)
     if not same_path(resolve_path(marketplace.root, source), config.package):
@@ -446,7 +462,11 @@ def marketplace_source_path(entry: dict[str, Any], client: str) -> str:
     source = entry.get("source")
     if client == "claude" and isinstance(source, str):
         return source
-    if client == "codex" and isinstance(source, dict) and source.get("source") == "local":
+    if (
+        client == "codex"
+        and isinstance(source, dict)
+        and source.get("source") == "local"
+    ):
         path = source.get("path")
         if isinstance(path, str):
             return path
@@ -458,7 +478,9 @@ def resolve_path(root: Path, value: str) -> Path:
     return (path if path.is_absolute() else root / path).resolve()
 
 
-def plan_plugin(config: PluginConfig, target: ClientTarget, runner: CommandRunner) -> ClientPlan:
+def plan_plugin(
+    config: PluginConfig, target: ClientTarget, runner: CommandRunner
+) -> ClientPlan:
     if target.name == "claude":
         return plan_claude(config, target, runner)
     if target.name == "codex":
@@ -466,7 +488,9 @@ def plan_plugin(config: PluginConfig, target: ClientTarget, runner: CommandRunne
     return plan_grok(config, target, runner)
 
 
-def plan_claude(config: PluginConfig, target: ClientTarget, runner: CommandRunner) -> ClientPlan:
+def plan_claude(
+    config: PluginConfig, target: ClientTarget, runner: CommandRunner
+) -> ClientPlan:
     marketplace = config.marketplaces["claude"]
     commands: list[Command] = []
     if not has_field_value(
@@ -494,12 +518,17 @@ def plan_claude(config: PluginConfig, target: ClientTarget, runner: CommandRunne
     installed = records(runner.inspect(target, ("plugin", "list", "--json")), "plugins")
     action = "update" if has_field_value(installed, "id", selector) else "install"
     commands.append(
-        Command(("plugin", action, selector, "--scope", "user"), f"{action} plugin {selector}")
+        Command(
+            ("plugin", action, selector, "--scope", "user"),
+            f"{action} plugin {selector}",
+        )
     )
     return ClientPlan("claude", tuple(commands), ("plugin", "list", "--json"), selector)
 
 
-def plan_codex(config: PluginConfig, target: ClientTarget, runner: CommandRunner) -> ClientPlan:
+def plan_codex(
+    config: PluginConfig, target: ClientTarget, runner: CommandRunner
+) -> ClientPlan:
     marketplace = config.marketplaces["codex"]
     registered = exact_record(
         records(
@@ -521,16 +550,22 @@ def plan_codex(config: PluginConfig, target: ClientTarget, runner: CommandRunner
         registered["root"], marketplace.root
     ):
         raise SyncError(
-            f"Codex marketplace {marketplace.name} is registered from a different source"
+            f"Codex marketplace {marketplace.name} is registered "
+            "from a different source"
         )
     selector = f"{config.plugin_name}@{marketplace.name}"
     commands.append(
-        Command(("plugin", "add", selector, "--json"), f"install or refresh plugin {selector}")
+        Command(
+            ("plugin", "add", selector, "--json"),
+            f"install or refresh plugin {selector}",
+        )
     )
     return ClientPlan("codex", tuple(commands), ("plugin", "list", "--json"), selector)
 
 
-def plan_grok(config: PluginConfig, target: ClientTarget, runner: CommandRunner) -> ClientPlan:
+def plan_grok(
+    config: PluginConfig, target: ClientTarget, runner: CommandRunner
+) -> ClientPlan:
     installed = records(runner.inspect(target, ("plugin", "list", "--json")), "plugins")
     installed_plugin = exact_record(installed, "name", config.plugin_name)
     commands: tuple[Command, ...]
@@ -544,10 +579,15 @@ def plan_grok(config: PluginConfig, target: ClientTarget, runner: CommandRunner)
     else:
         source = installed_plugin.get("source")
         if not isinstance(source, str):
-            raise SyncError(f"Grok plugin {config.plugin_name} does not report its source")
+            raise SyncError(
+                f"Grok plugin {config.plugin_name} does not report its source"
+            )
         if same_path(resolve_path(config.root, source), config.package):
             commands = (
-                Command(("plugin", "update", config.plugin_name), f"update plugin {config.plugin_name}"),
+                Command(
+                    ("plugin", "update", config.plugin_name),
+                    f"update plugin {config.plugin_name}",
+                ),
             )
         else:
             commands = (
@@ -560,10 +600,14 @@ def plan_grok(config: PluginConfig, target: ClientTarget, runner: CommandRunner)
                     f"install trusted plugin {config.plugin_name}",
                 ),
             )
-    return ClientPlan("grok", commands, ("plugin", "list", "--json"), config.plugin_name)
+    return ClientPlan(
+        "grok", commands, ("plugin", "list", "--json"), config.plugin_name
+    )
 
 
-def list_plugin(config: PluginConfig, target: ClientTarget, runner: CommandRunner) -> Outcome:
+def list_plugin(
+    config: PluginConfig, target: ClientTarget, runner: CommandRunner
+) -> Outcome:
     if target.name == "claude":
         selector = f"{config.plugin_name}@{config.marketplaces['claude'].name}"
         found = has_field_value(
@@ -600,7 +644,9 @@ def plan_plugin_removal(
 ) -> ClientPlan:
     if target.name == "claude":
         selector = f"{config.plugin_name}@{config.marketplaces['claude'].name}"
-        installed = records(runner.inspect(target, ("plugin", "list", "--json")), "plugins")
+        installed = records(
+            runner.inspect(target, ("plugin", "list", "--json")), "plugins"
+        )
         commands = (
             (
                 Command(
@@ -613,15 +659,24 @@ def plan_plugin_removal(
         )
     elif target.name == "codex":
         selector = f"{config.plugin_name}@{config.marketplaces['codex'].name}"
-        installed = records(runner.inspect(target, ("plugin", "list", "--json")), "installed")
+        installed = records(
+            runner.inspect(target, ("plugin", "list", "--json")), "installed"
+        )
         commands = (
-            (Command(("plugin", "remove", selector, "--json"), f"remove plugin {selector}"),)
+            (
+                Command(
+                    ("plugin", "remove", selector, "--json"),
+                    f"remove plugin {selector}",
+                ),
+            )
             if codex_has_plugin(installed, config, selector)
             else ()
         )
     else:
         selector = config.plugin_name
-        installed = records(runner.inspect(target, ("plugin", "list", "--json")), "plugins")
+        installed = records(
+            runner.inspect(target, ("plugin", "list", "--json")), "plugins"
+        )
         commands = (
             (
                 Command(
@@ -779,9 +834,13 @@ def manage_skill(
 def validate_skill_source(config: SkillConfig) -> None:
     skill_file = config.source / "SKILL.md"
     if not config.source.is_dir() or not skill_file.is_file():
-        raise SyncError(f"skill source must be a directory containing SKILL.md: {config.source}")
+        raise SyncError(
+            f"skill source must be a directory containing SKILL.md: {config.source}"
+        )
     if skill_frontmatter_name(skill_file) != config.name:
-        raise SyncError(f"SKILL.md frontmatter name must equal STANDALONE_SKILL_NAME: {skill_file}")
+        raise SyncError(
+            f"SKILL.md frontmatter name must equal STANDALONE_SKILL_NAME: {skill_file}"
+        )
 
 
 def skill_frontmatter_name(path: Path) -> str | None:
@@ -794,7 +853,9 @@ def skill_frontmatter_name(path: Path) -> str | None:
     match = re.match(r"---\s*\n(.*?)\n---", text, flags=re.DOTALL)
     if match is None:
         return None
-    name_match = re.search(r"^name:\s*['\"]?([^'\"\s#]+)", match.group(1), flags=re.MULTILINE)
+    name_match = re.search(
+        r"^name:\s*['\"]?([^'\"\s#]+)", match.group(1), flags=re.MULTILINE
+    )
     return name_match.group(1) if name_match else None
 
 
@@ -817,7 +878,9 @@ def list_skill(config: SkillConfig, target: ClientTarget) -> Outcome:
             target.name,
             config.name,
         )
-        return Outcome(target.name, "failed", f"managed skill target is a symlink: {destination}")
+        return Outcome(
+            target.name, "failed", f"managed skill target is a symlink: {destination}"
+        )
     if destination.is_dir() and (destination / "SKILL.md").is_file():
         logging.info(
             "client=%s skill=%s action=list state=installed",
@@ -853,18 +916,26 @@ def apply_skill(config: SkillConfig, target: ClientTarget, dry_run: bool) -> Out
         destination,
     )
     if dry_run:
-        return Outcome(target.name, "planned", str(destination), ["publish skill leaf directory"])
+        return Outcome(
+            target.name, "planned", str(destination), ["publish skill leaf directory"]
+        )
     try:
         replace_skill_leaf(config.source, destination)
     except SyncError as error:
-        return Outcome(target.name, "failed", str(error), ["publish skill leaf directory"])
-    return Outcome(target.name, "applied", str(destination), ["publish skill leaf directory"])
+        return Outcome(
+            target.name, "failed", str(error), ["publish skill leaf directory"]
+        )
+    return Outcome(
+        target.name, "applied", str(destination), ["publish skill leaf directory"]
+    )
 
 
 def remove_skill(config: SkillConfig, target: ClientTarget, dry_run: bool) -> Outcome:
     destination = skill_target(config, target.name)
     if destination.is_symlink():
-        return Outcome(target.name, "failed", f"refusing to remove a symlink: {destination}")
+        return Outcome(
+            target.name, "failed", f"refusing to remove a symlink: {destination}"
+        )
     if not destination.exists():
         return Outcome(target.name, "absent", str(destination))
     if not destination.is_dir():
@@ -880,7 +951,9 @@ def remove_skill(config: SkillConfig, target: ClientTarget, dry_run: bool) -> Ou
             config.name,
             destination,
         )
-        return Outcome(target.name, "planned", str(destination), ["remove skill leaf directory"])
+        return Outcome(
+            target.name, "planned", str(destination), ["remove skill leaf directory"]
+        )
     try:
         logging.info(
             "client=%s skill=%s action=remove skill leaf directory destination=%s",
@@ -896,7 +969,9 @@ def remove_skill(config: SkillConfig, target: ClientTarget, dry_run: bool) -> Ou
             f"could not remove skill directory: {destination}",
             ["remove skill leaf directory"],
         )
-    return Outcome(target.name, "removed", str(destination), ["remove skill leaf directory"])
+    return Outcome(
+        target.name, "removed", str(destination), ["remove skill leaf directory"]
+    )
 
 
 def replace_skill_leaf(source: Path, destination: Path) -> None:
@@ -933,8 +1008,12 @@ def records(payload: Any, field: str) -> list[dict[str, Any]]:
         if isinstance(payload, dict)
         else None
     )
-    if not isinstance(values, list) or not all(isinstance(item, dict) for item in values):
-        raise SyncError(f"unexpected plugin-list JSON: expected an array of records in {field}")
+    if not isinstance(values, list) or not all(
+        isinstance(item, dict) for item in values
+    ):
+        raise SyncError(
+            f"unexpected plugin-list JSON: expected an array of records in {field}"
+        )
     return values
 
 
@@ -943,11 +1022,15 @@ def exact_record(
 ) -> dict[str, Any] | None:
     matches = [item for item in records_to_search if item.get(field) == expected]
     if len(matches) > 1:
-        raise SyncError(f"plugin CLI returned more than one record with {field}={expected}")
+        raise SyncError(
+            f"plugin CLI returned more than one record with {field}={expected}"
+        )
     return matches[0] if matches else None
 
 
-def has_field_value(records_to_search: Iterable[dict[str, Any]], field: str, expected: str) -> bool:
+def has_field_value(
+    records_to_search: Iterable[dict[str, Any]], field: str, expected: str
+) -> bool:
     return exact_record(records_to_search, field, expected) is not None
 
 

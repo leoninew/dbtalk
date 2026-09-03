@@ -7,13 +7,13 @@ Stage: Verification
 
 ## Requirement 对齐
 
-已对照 [Requirement](../requirement/20260824-dsn-dotenv-fallback.md) 验证：`--dsn-env DBTALK_*` 支持从当前目录 `.env` 回退读取，进程环境优先，非 `DBTALK_*` 名称维持原行为；三个 dbtalk skills 已说明安全的 `.env` 使用约束。
+已对照 [Requirement](../requirement/20260824-dsn-dotenv-fallback.md) 验证：`--dsn-env DBTALK_DSN_*` 支持从当前目录 `.env` 回退读取，进程环境优先，非 `DBTALK_DSN_*` 名称维持原行为；三个 dbtalk skills 已说明安全的 `.env` 使用约束。
 
 ## 实际 diff 摘要
 
 - `src/dbtalk/database/dsn.py` 使用 `python-dotenv` 的 `dotenv_values` 定向读取 `Path.cwd() / ".env"`，不修改 `os.environ`。
 - `tests/test_database_operations.py` 增加 dotenv 读取、进程优先、空值和非 `DBTALK_*` 范围测试。
-- `plugins/dbtalk/skills/dbtalk-database/SKILL.md`、`dbtalk-mysql/SKILL.md`、`dbtalk-postgres/SKILL.md` 增加 `.env` 写入授权、`DBTALK_*` 命名及凭据保护说明，并统一示例。
+- `plugins/dbtalk/skills/dbtalk/SKILL.md`、`dbtalk-mysql/SKILL.md`、`dbtalk-postgres/SKILL.md` 使用 `.env`、`DBTALK_*` 命名和 `--dsn-env` 的统一示例。
 - 新增本验证文档；未创建或修改真实 `.env` 文件。
 
 ## 预期与实际文件
@@ -26,7 +26,7 @@ Stage: Verification
 - [x] 进程环境变量优先；进程中存在空值时不回退到 `.env`。
 - [x] `.env` 缺失、条目缺失或为空时保持 `DSN environment variable is not set` 错误。
 - [x] 非 `DBTALK_*` 名称不会从 `.env` 读取。
-- [x] database、MySQL、PostgreSQL skills 均说明经授权后写入被 Git 忽略的 `.env`，并禁止猜测、回显和提交凭据。
+- [x] database、MySQL、PostgreSQL skills 均说明将 DSN 写入当前目录 `.env` 后使用 `--dsn-env`，并禁止在命令参数或输出中回显凭据。
 - [x] 单元测试覆盖读取、优先级、范围和错误边界。
 
 ## 命令结果

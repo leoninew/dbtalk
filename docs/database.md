@@ -1,6 +1,6 @@
 # 数据库操作手册
 
-`dbtalk query`、`dbtalk exec` 提供通用 SQL，`dbtalk export`、`dbtalk import` 用 JSONL 在既有 SQLite、MySQL 与 PostgreSQL schema 之间传输表数据。所有连接入口都使用一个明确的 SQLAlchemy 2.x DSN：命令接受二选一的 `--dsn DSN` 或 `--dsn-env NAME`，Python API 接受 DSN 字符串或环境变量名。不会根据数据库类型猜测 driver。
+`dbtalk query`、`dbtalk exec` 提供通用 SQL，`dbtalk export`、`dbtalk import` 用 JSONL 在既有 SQLite、MySQL 与 PostgreSQL schema 之间传输表数据。所有连接入口都使用明确的 SQLAlchemy 2.x DSN：CLI 接受二选一的 `--dsn DSN` 或 `--dsn-env NAME`，Python API 接受 DSN 字符串或环境变量名。`--dsn` 保留给直接集成；Agent 必须将 DSN 规划为当前目录 `.env` 中的 `DBTALK_DSN_*`，并且只使用 `--dsn-env`。不会根据数据库类型猜测 driver。
 
 ```bash
 uv run dbtalk --help
@@ -22,7 +22,7 @@ mysql+asyncmy://user:password@host:3306/app
 postgresql+psycopg://user:password@host:5432/app
 ```
 
-`mysql://`、`postgres://`、`postgresql://`、Go 风格 `user:password@tcp(...)` 和数据库类型专用文件参数都不属于 canonical DSN，命令会拒绝。密码可放在环境变量中，避免出现在进程参数中。
+`mysql://`、`postgres://`、`postgresql://`、Go 风格 `user:password@tcp(...)` 和数据库类型专用文件参数都不属于 canonical DSN，命令会拒绝。Agent 将 DSN 写入当前目录 `.env` 的 `DBTALK_DSN_*` 条目，避免出现在进程参数中；`.env.local` 或其他 dotenv 变体不会被加载。
 
 MySQL 与 PostgreSQL URL 的末尾 database path 在语法上可省略，例如 `mysql+pymysql://user:password@host:3306/`。`query` 与 `exec` 可将这种 URL 原样交给 driver；`export` 与 `import` 必须在 DSN 中明确带有 database name，避免读写 driver 默认库。SQLite 的 database path 始终必填。
 
@@ -30,23 +30,28 @@ MySQL 与 PostgreSQL URL 的末尾 database path 在语法上可省略，例如 
 
 SQL 使用 SQLAlchemy named bind 参数。参数格式为可重复的 `NAME=JSON_VALUE`，字符串需要使用 JSON 字符串表示。两个命令都有 `--timeout` / `-t`，单位为秒，只接受正整数。`query` 省略时使用 `database.query_timeout_seconds`，`exec` 省略时使用 `database.exec_timeout_seconds`，两者默认均为 `30`。该 timeout 仅针对当前单条语句。需要限制建立 MySQL 或 PostgreSQL 连接的时间时，可在单次调用传入 `--connect-timeout SECONDS`；它不设置 SQL deadline，也没有全局默认值。
 
+先将应用 DSN 写入当前目录 `.env`：
+
+```dotenv
+DBTALK_DSN_APP=sqlite:///./data/app.db
+```
+
 ```bash
 uv run dbtalk query \
-  --dsn 'sqlite:///./data/app.db' \
+  --dsn-env DBTALK_DSN_APP \
   --sql 'SELECT id, name FROM users WHERE id = :id' \
   --param id=1 \
   --format table
 
-export APP_DSN='sqlite:///./data/app.db'
 uv run dbtalk query \
-  --dsn-env APP_DSN \
+  --dsn-env DBTALK_DSN_APP \
   --sql 'SELECT id, name FROM users WHERE id = :id' \
   --param id=1 \
   --format json
 
 uv run dbtalk exec \
   --write \
-  --dsn-env APP_DSN \
+  --dsn-env DBTALK_DSN_APP \
   --sql 'UPDATE users SET name = :name WHERE id = :id' \
   --param 'name="Ada"' \
   --param id=1
@@ -75,19 +80,19 @@ export DBTALK_DATABASE__EXEC_TIMEOUT_SECONDS='45'
 
 export 读取选定源 schema，将表元数据和行数据写入一个 JSONL 文件：
 
+为传输源单独规划变量名，并写入当前目录 `.env`：
+
+```dotenv
+DBTALK_DSN_SOURCE=postgresql+psycopg://user:password@host:5432/source_db
+```
+
 ```bash
 uv run dbtalk export \
-  --source sqlite \
-  --dsn 'sqlite:///./source.db' \
+  --source postgresql \
+  --dsn-env DBTALK_DSN_SOURCE \
   --output ./data/transfer.jsonl \
   --include-table users \
   --exclude-table audit_log
-
-export SOURCE_PG_DSN='postgresql+psycopg://user:password@host:5432/source_db'
-uv run dbtalk export \
-  --source postgresql \
-  --dsn-env SOURCE_PG_DSN \
-  --output ./data/transfer.jsonl
 ```
 
 | 选项 | 说明 |
@@ -108,17 +113,16 @@ uv run dbtalk export \
 
 import 将 JSONL 制品写入既有目标 schema：
 
+为传输目标使用独立名称，不能复用来源 DSN：
+
+```dotenv
+DBTALK_DSN_TARGET=mysql+pymysql://user:password@host:3306/target_db
+```
+
 ```bash
 uv run dbtalk import \
-  --target sqlite \
-  --dsn 'sqlite:///./target.db' \
-  --input ./data/transfer.jsonl \
-  --mode upsert
-
-export TARGET_MYSQL_DSN='mysql+pymysql://user:password@host:3306/target_db'
-uv run dbtalk import \
   --target mysql \
-  --dsn-env TARGET_MYSQL_DSN \
+  --dsn-env DBTALK_DSN_TARGET \
   --input ./data/transfer.jsonl.gz \
   --mode insert
 ```
