@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-SCRIPT = Path(__file__).parents[1] / "scripts" / "version_calc.py"
+SCRIPT = Path(__file__).parents[1] / "scripts" / "version-calc.py"
 SPEC = importlib.util.spec_from_file_location("dbtalk_version_calc", SCRIPT)
 assert SPEC is not None
 assert SPEC.loader is not None

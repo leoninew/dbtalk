@@ -31,7 +31,7 @@ ifneq ($(filter 1 true yes,$(cov)),)
 TEST_COV_ARGS := --cov=dbtalk --cov-report=term-missing:skip-covered --cov-report=html
 endif
 
-.PHONY: help deps install check test version release binary release-image
+.PHONY: help deps install check test version release pypi binary release-image
 
 help: ## Show available targets.
 	@echo "Usage: make <target> [IMAGE_NAME=registry/dbtalk] [IMAGE_TAG=1.0.0]"
@@ -43,6 +43,7 @@ help: ## Show available targets.
 	@echo "  test          Run unit tests (cov=1 enables coverage reports)"
 	@echo "  version       Calculate the Git-derived version (apply=1 updates version files)"
 	@echo "  release       Build source and wheel distributions"
+	@echo "  pypi          Upload the pyproject.toml version's dist artifacts to PyPI"
 	@echo "  binary        Build a standalone executable"
 	@echo "  release-image Build the runtime container image"
 
@@ -65,13 +66,24 @@ test: ## Run unit tests; use cov=1 to collect coverage.
 
 version: ## Calculate the Git-derived project version; use apply=1 to update version files.
 ifeq ($(apply),1)
-	$(UV_RUN) python scripts/version_calc.py --no-dry-run
+	$(UV_RUN) python scripts/version-calc.py --no-dry-run
 else
-	$(UV_RUN) python scripts/version_calc.py
+	$(UV_RUN) python scripts/version-calc.py
 endif
 
 release: ## Build source and wheel distributions.
 	$(UV) build
+
+# version-calc.py writes [project].version; uv version reads that same field.
+VERSION = $(shell $(UV) version --short)
+
+pypi: ## Upload the current package version's sdist and wheel to PyPI.
+	$(if $(VERSION),,$(error could not read [project].version from pyproject.toml))
+	$(if $(wildcard dist/dbtalk-$(VERSION).tar.gz),,$(error Missing dist/dbtalk-$(VERSION).tar.gz))
+	$(if $(wildcard dist/dbtalk-$(VERSION)-py3-none-any.whl),,$(error Missing dist/dbtalk-$(VERSION)-py3-none-any.whl))
+	$(UV) tool run --env-file .env twine upload --non-interactive \
+		"dist/dbtalk-$(VERSION).tar.gz" \
+		"dist/dbtalk-$(VERSION)-py3-none-any.whl"
 
 binary: ## Build a standalone executable with PyInstaller.
 	$(UV_RUN) pyinstaller --noconfirm --clean --onefile --name $(BINARY_NAME) --add-data "$(PROJECT_ROOT)/dbtalk.yaml$(PYINSTALLER_DATA_SEPARATOR)." --distpath $(BINARY_DIST_DIR) --workpath $(BINARY_BUILD_DIR) --specpath $(BINARY_BUILD_DIR) src/dbtalk/__main__.py

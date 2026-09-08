@@ -36,4 +36,4 @@ skills 会先通过相应的 `--help` 确认可用参数。CLI 保留 `--dsn DSN
 
 `scripts/install.py` 只提供显式的 `plugin check|list|apply|remove` 子命令；无参数或只指定 `plugin` 时显示帮助。
 
-`make release` 仅执行 `uv build`，构建 source 和 wheel 发布产物；它不安装 CLI，也不修改 agent plugin。
+`make release` 仅执行 `uv build`，构建 source 和 wheel 发布产物；它不安装 CLI，也不修改 agent plugin，也不上传到 PyPI。`make pypi` 用 `uv version --short` 读取 `version-calc.py` 写入的 `pyproject.toml` `[project].version`，只上传对应的 `dist/dbtalk-<version>.tar.gz` 与 `dist/dbtalk-<version>-py3-none-any.whl`；读不到版本或对应制品缺失时在上传前失败。它不导入 `dbtalk` 包。凭据从当前目录 `.env` 的 `TWINE_USERNAME` / `TWINE_PASSWORD` 读取，不写入仓库。

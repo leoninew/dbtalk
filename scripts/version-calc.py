@@ -12,8 +12,8 @@ field in ``pyproject.toml`` and ``dbtalk.__version__``, then refreshes
 
 Usage:
 
-    uv run --locked --no-sync python scripts/version_calc.py
-    uv run --locked --no-sync python scripts/version_calc.py --quiet --no-dry-run
+    uv run --locked --no-sync python scripts/version-calc.py
+    uv run --locked --no-sync python scripts/version-calc.py --quiet --no-dry-run
 """
 
 from __future__ import annotations
