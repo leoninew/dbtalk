@@ -2,7 +2,7 @@ name: Release wheel
 
 # Replace these project values.
 env:
-  PROJECT_NAME: "dbtalk"
+  PROJECT_NAME: "pomelo-dbtalk"
   PACKAGE_IMPORT: "dbtalk"
   RELEASE_COMMAND: "dbtalk"
   TAG_PATTERN: &tag_pattern "v*"

@@ -76,14 +76,15 @@ release: ## Build source and wheel distributions.
 
 # version-calc.py writes [project].version; uv version reads that same field.
 VERSION = $(shell $(UV) version --short)
+DIST_STEM = pomelo_dbtalk
 
 pypi: ## Upload the current package version's sdist and wheel to PyPI.
 	$(if $(VERSION),,$(error could not read [project].version from pyproject.toml))
-	$(if $(wildcard dist/dbtalk-$(VERSION).tar.gz),,$(error Missing dist/dbtalk-$(VERSION).tar.gz))
-	$(if $(wildcard dist/dbtalk-$(VERSION)-py3-none-any.whl),,$(error Missing dist/dbtalk-$(VERSION)-py3-none-any.whl))
+	$(if $(wildcard dist/$(DIST_STEM)-$(VERSION).tar.gz),,$(error Missing dist/$(DIST_STEM)-$(VERSION).tar.gz))
+	$(if $(wildcard dist/$(DIST_STEM)-$(VERSION)-py3-none-any.whl),,$(error Missing dist/$(DIST_STEM)-$(VERSION)-py3-none-any.whl))
 	$(UV) tool run --env-file .env twine upload --non-interactive \
-		"dist/dbtalk-$(VERSION).tar.gz" \
-		"dist/dbtalk-$(VERSION)-py3-none-any.whl"
+		"dist/$(DIST_STEM)-$(VERSION).tar.gz" \
+		"dist/$(DIST_STEM)-$(VERSION)-py3-none-any.whl"
 
 binary: ## Build a standalone executable with PyInstaller.
 	$(UV_RUN) pyinstaller --noconfirm --clean --onefile --name $(BINARY_NAME) --add-data "$(PROJECT_ROOT)/dbtalk.yaml$(PYINSTALLER_DATA_SEPARATOR)." --distpath $(BINARY_DIST_DIR) --workpath $(BINARY_BUILD_DIR) --specpath $(BINARY_BUILD_DIR) src/dbtalk/__main__.py
