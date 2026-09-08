@@ -38,10 +38,11 @@ uv run dbtalk query \
   --sql 'SELECT 1 AS ok'
 
 uv run dbtalk exec \
-  --write \
   --dsn-env DBTALK_DSN_APP \
   --sql 'CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)'
 ```
+
+`query` is read-only; `exec` runs a write-capable session. Add `-v` on a leaf command to see sanitized exception details.
 
 Agents write the DSN to `.env` before the first database command. `--dsn-env DBTALK_DSN_*` reads the process environment first and only falls back to the current `.env` when that variable is absent.
 

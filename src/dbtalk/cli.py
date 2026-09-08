@@ -5,6 +5,7 @@ from __future__ import annotations
 import click
 
 from dbtalk import __version__
+from dbtalk.cli_runtime import DbtalkGroup
 from dbtalk.commands import mysql, postgres
 from dbtalk.context import DbtalkContext
 from dbtalk.database.cli import database as database_operations
@@ -15,21 +16,21 @@ CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
 @click.group(
+    cls=DbtalkGroup,
     context_settings=CONTEXT_SETTINGS,
     invoke_without_command=True,
 )
 @click.version_option(version=__version__, prog_name="dbtalk")
-@click.option("-v", "--verbose", is_flag=True, help="Enable debug log messages.")
 @click.pass_context
-def cli(ctx: click.Context, verbose: bool) -> None:
+def cli(ctx: click.Context) -> None:
     """Run database backup, restore, transfer, query, and execution operations."""
     settings = load_settings()
     configure_logging(
         settings.logging.level,
         settings.logging.format,
-        verbose or settings.verbose,
+        settings.verbose,
     )
-    ctx.obj = DbtalkContext(settings=settings, verbose=verbose or settings.verbose)
+    ctx.obj = DbtalkContext(settings=settings, verbose=settings.verbose)
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
 

@@ -7,6 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from tabulate import tabulate
 
+from dbtalk.cli_runtime import DbtalkGroup
 from dbtalk.database.dsn import ParsedDsn
 from dbtalk.database.models import DatabaseOperationError
 
@@ -20,7 +21,7 @@ from .role import (
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
-@click.group("permissions", context_settings=CONTEXT_SETTINGS)
+@click.group("permissions", cls=DbtalkGroup, context_settings=CONTEXT_SETTINGS)
 def permissions() -> None:
     """Inspect native PostgreSQL grants."""
 

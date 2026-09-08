@@ -16,6 +16,7 @@ from sqlalchemy.engine import Connection, Engine, create_engine
 from sqlalchemy.exc import SQLAlchemyError
 from tabulate import tabulate
 
+from dbtalk.cli_runtime import DbtalkCommand, DbtalkGroup
 from dbtalk.database.dsn import ParsedDsn, dsn_from_environment, parse_dsn
 from dbtalk.database.models import DatabaseOperationError
 
@@ -35,7 +36,7 @@ class PostgreSQLRoleRecord:
     createrole: bool
 
 
-@click.group("role", context_settings=CONTEXT_SETTINGS)
+@click.group("role", cls=DbtalkGroup, context_settings=CONTEXT_SETTINGS)
 def role() -> None:
     """Manage PostgreSQL roles."""
 
@@ -160,7 +161,7 @@ def drop_command(
     click.echo(f"PostgreSQL role dropped: {role_name}")
 
 
-@click.command("grant", context_settings=CONTEXT_SETTINGS)
+@click.command("grant", cls=DbtalkCommand, context_settings=CONTEXT_SETTINGS)
 @click.option("--dsn", "dsn_value", help="Complete PostgreSQL SQLAlchemy-style DSN.")
 @click.option("--dsn-env", help="Environment variable containing the PostgreSQL DSN.")
 @click.option("--role", "role_name", required=True, help="PostgreSQL role name.")
@@ -221,7 +222,7 @@ def grant_command(
     )
 
 
-@click.command("revoke", context_settings=CONTEXT_SETTINGS)
+@click.command("revoke", cls=DbtalkCommand, context_settings=CONTEXT_SETTINGS)
 @click.option("--dsn", "dsn_value", help="Complete PostgreSQL SQLAlchemy-style DSN.")
 @click.option("--dsn-env", help="Environment variable containing the PostgreSQL DSN.")
 @click.option("--role", "role_name", required=True, help="PostgreSQL role name.")

@@ -10,13 +10,14 @@ from sqlalchemy.engine import Connection, Engine, create_engine
 from sqlalchemy.exc import SQLAlchemyError
 from tabulate import tabulate
 
+from dbtalk.cli_runtime import DbtalkGroup
 from dbtalk.database.dsn import ParsedDsn, dsn_from_environment, parse_dsn
 from dbtalk.database.models import DatabaseOperationError
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
-@click.group("schema", context_settings=CONTEXT_SETTINGS)
+@click.group("schema", cls=DbtalkGroup, context_settings=CONTEXT_SETTINGS)
 def schema() -> None:
     """Manage PostgreSQL schemas and databases."""
 

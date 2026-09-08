@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import traceback
 from dataclasses import dataclass
 from datetime import tzinfo
 from pathlib import Path
@@ -148,3 +150,68 @@ class TransferSummary:
 
     table_count: int
     row_count: int
+
+
+_SECRET_ASSIGNMENT_PATTERN = re.compile(r"(?i)(mysql_pwd=|password=|pgpassword=)[^\s]+")
+_DSN_USERINFO_PATTERN = re.compile(r"(?i)((?:mysql|postgresql)(?:\+[\w.]+)?://)[^@\s]+@")
+_SQLALCHEMY_NOISE_MARKERS = ("[SQL:", "[parameters:", "(Background on this error at:")
+
+
+def sanitize_error_detail(message: str) -> str:
+    """Remove credentials and truncate diagnostics before display or logging."""
+
+    sanitized = _SECRET_ASSIGNMENT_PATTERN.sub(r"\1<redacted>", message)
+    sanitized = _DSN_USERINFO_PATTERN.sub(r"\1<redacted>@", sanitized)
+    return sanitized[:1000]
+
+
+def driver_error_detail(error: BaseException) -> str:
+    """Return exception type and message without SQL, parameters, or traceback."""
+
+    text = "".join(traceback.format_exception_only(error)).strip()
+    return _strip_sqlalchemy_noise(text)
+
+
+def format_cli_error(error: BaseException, *, verbose: bool) -> str:
+    """Render a CLI error, optionally appending sanitized exception details."""
+
+    message = str(error)
+    if not verbose:
+        return message
+    detail = sanitize_error_detail(_verbose_error_detail(error))
+    if not detail or detail in message:
+        return message
+    return f"{message}: {detail}"
+
+
+def _verbose_error_detail(error: BaseException) -> str:
+    outer = str(error)
+    for current in _exception_chain(error)[1:]:
+        raw = _strip_sqlalchemy_noise(str(current))
+        if not raw or raw == outer or raw in outer:
+            continue
+        detail = driver_error_detail(current)
+        if not detail or detail == outer or detail in outer:
+            continue
+        return detail
+    return ""
+
+
+def _exception_chain(error: BaseException) -> list[BaseException]:
+    chain: list[BaseException] = []
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        chain.append(current)
+        current = current.__cause__ if current.__cause__ is not None else current.__context__
+    return chain
+
+
+def _strip_sqlalchemy_noise(message: str) -> str:
+    cut = len(message)
+    for marker in _SQLALCHEMY_NOISE_MARKERS:
+        index = message.find(marker)
+        if index != -1:
+            cut = min(cut, index)
+    return message[:cut].strip()

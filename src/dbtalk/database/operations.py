@@ -78,7 +78,6 @@ def execute_from_environment(
     *,
     timeout_seconds: int,
     connect_timeout_seconds: int | None = None,
-    allow_write: bool = True,
 ) -> ExecutionResult:
     return execute_from_dsn(
         None,
@@ -87,7 +86,6 @@ def execute_from_environment(
         parameters,
         timeout_seconds=timeout_seconds,
         connect_timeout_seconds=connect_timeout_seconds,
-        allow_write=allow_write,
     )
 
 
@@ -99,7 +97,6 @@ def execute_from_dsn(
     *,
     timeout_seconds: int,
     connect_timeout_seconds: int | None = None,
-    allow_write: bool = True,
 ) -> ExecutionResult:
     parsed = _resolve_operation_dsn(dsn, environment_name)
     with DatabaseClient(
@@ -107,7 +104,7 @@ def execute_from_dsn(
         timeout_seconds=timeout_seconds,
         connect_timeout_seconds=connect_timeout_seconds,
     ) as client:
-        return client.execute(statement, parameters, read_only=not allow_write)
+        return client.execute(statement, parameters, read_only=False)
 
 
 def _resolve_operation_dsn(dsn: str | None, environment_name: str | None) -> ParsedDsn:
