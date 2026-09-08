@@ -4,7 +4,6 @@ import contextlib
 import gzip
 import os
 import platform
-import re
 import shutil
 import subprocess
 import tempfile
@@ -15,6 +14,7 @@ from typing import BinaryIO
 
 import click
 
+from dbtalk.database.models import sanitize_error_detail
 from dbtalk.settings import DEFAULT_MYSQL_PORT
 
 LOCAL_MYSQL_HOSTS = frozenset({"localhost", "127.0.0.1"})
@@ -341,13 +341,7 @@ def _decode_output(value: bytes) -> str:
 
 def sanitize_error_message(message: str) -> str:
     """Remove credentials and truncate subprocess diagnostics before display or logging."""
-    sanitized = re.sub(r"(?i)(mysql_pwd=|password=)[^\s]+", r"\1<redacted>", message)
-    sanitized = re.sub(
-        r"(?i)(mysql(?:\+pymysql)?://)[^@\s]+@",
-        r"\1<redacted>@",
-        sanitized,
-    )
-    return sanitized[:1000]
+    return sanitize_error_detail(message)
 
 
 def ensure_command_succeeded(result: subprocess.CompletedProcess[str], command_name: str) -> None:

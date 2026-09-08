@@ -6,6 +6,7 @@ from pathlib import Path
 
 import click
 
+from dbtalk.cli_runtime import DbtalkGroup
 from dbtalk.context import dbtalk_context
 from dbtalk.database.dsn import dsn_from_environment, parse_dsn
 from dbtalk.database.models import DatabaseOperationError
@@ -30,7 +31,7 @@ __all__ = [
 ]
 
 
-@click.group("postgres", context_settings=CONTEXT_SETTINGS)
+@click.group("postgres", cls=DbtalkGroup, context_settings=CONTEXT_SETTINGS)
 def postgres() -> None:
     """Run PostgreSQL custom archive dump and restore operations."""
 

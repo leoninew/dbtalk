@@ -46,7 +46,6 @@ dbtalk query \
   --format json
 
 dbtalk exec \
-  --write \
   --dsn-env DBTALK_DSN_APP \
   --timeout 30 \
   --sql 'UPDATE users SET name = :name WHERE id = :id' \
@@ -54,7 +53,7 @@ dbtalk exec \
   --param id=1
 ```
 
-`query` 默认输出表格，`--format json` 输出 `columns`、`rows`、`row_count`。它使用数据库只读会话，不分析 SQL 文本；写入或 DDL 会由数据库拒绝。`exec` 默认使用只读会话，传入 `--write` 或 `-w` 后才切换为写会话；实际是否为写入由数据库判断。参数格式为可重复的 `NAME=JSON_VALUE`，两条命令都只执行一条 SQL。
+`query` 默认输出表格，`--format json` 输出 `columns`、`rows`、`row_count`。它使用数据库只读会话，不分析 SQL 文本；写入或 DDL 会由数据库拒绝。`exec` 使用写会话；实际能否写入由数据库判断。参数格式为可重复的 `NAME=JSON_VALUE`，两条命令都只执行一条 SQL。失败时在叶子命令上加 `-v` 可看到清洗后的异常细节；不要写 `dbtalk -v`。
 
 `--timeout` / `-t` 以秒限制单条 query/exec，只接受正整数。省略时使用 `database.operation_timeout_seconds` 配置（默认 30），可用 `DBTALK_DATABASE__OPERATION_TIMEOUT_SECONDS` 覆盖。不要为超时而改写 SQL；SQLite、PostgreSQL 和 MySQL 分别使用其原生会话或驱动机制。MySQL 写入超时后不保证非事务性语句或隐式提交 DDL 的完整回滚。
 

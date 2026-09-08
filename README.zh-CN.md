@@ -38,10 +38,11 @@ uv run dbtalk query \
   --sql 'SELECT 1 AS ok'
 
 uv run dbtalk exec \
-  --write \
   --dsn-env DBTALK_DSN_APP \
   --sql 'CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)'
 ```
+
+`query` 使用只读会话，`exec` 使用写会话。叶子命令可加 `-v` 查看清洗后的异常细节。
 
 Agent 在第一条数据库命令前将 DSN 写入 `.env`。`--dsn-env DBTALK_DSN_*` 优先读取进程环境变量，只有变量不存在时才从当前目录 `.env` 回退读取。
 

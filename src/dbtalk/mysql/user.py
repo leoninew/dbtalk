@@ -16,6 +16,7 @@ from sqlalchemy.engine import Connection, Engine, create_engine
 from sqlalchemy.exc import SQLAlchemyError
 from tabulate import tabulate
 
+from dbtalk.cli_runtime import DbtalkCommand, DbtalkGroup
 from dbtalk.database.dsn import ParsedDsn, dsn_from_environment, parse_dsn
 from dbtalk.database.models import DatabaseOperationError
 
@@ -37,7 +38,7 @@ class MysqlUserRecord:
     locked: bool
 
 
-@click.group("user", context_settings=CONTEXT_SETTINGS)
+@click.group("user", cls=DbtalkGroup, context_settings=CONTEXT_SETTINGS)
 def user() -> None:
     """Manage MySQL accounts."""
 
@@ -174,7 +175,7 @@ def drop_command(
     click.echo(f"MySQL user dropped: {_display_account(user_name, host)}")
 
 
-@click.command("grant", context_settings=CONTEXT_SETTINGS)
+@click.command("grant", cls=DbtalkCommand, context_settings=CONTEXT_SETTINGS)
 @click.option("--dsn", "dsn_value", help="Complete MySQL SQLAlchemy-style DSN.")
 @click.option("--dsn-env", help="Environment variable containing the MySQL DSN.")
 @click.option("--user", "user_name", required=True, help="MySQL account name.")
@@ -230,7 +231,7 @@ def grant_command(
     click.echo(f"MySQL {detail} granted on {target} to {account}")
 
 
-@click.command("revoke", context_settings=CONTEXT_SETTINGS)
+@click.command("revoke", cls=DbtalkCommand, context_settings=CONTEXT_SETTINGS)
 @click.option("--dsn", "dsn_value", help="Complete MySQL SQLAlchemy-style DSN.")
 @click.option("--dsn-env", help="Environment variable containing the MySQL DSN.")
 @click.option("--user", "user_name", required=True, help="MySQL account name.")

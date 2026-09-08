@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import click
 
+from dbtalk.cli_runtime import DbtalkGroup
 from dbtalk.context import DbtalkContext, dbtalk_context
 
 from .format import gzip_output_path
@@ -156,7 +157,7 @@ def resolve_export_output(
     return gzip_output_path(requested_output) if archive else requested_output
 
 
-@click.group("database", context_settings=CONTEXT_SETTINGS)
+@click.group("database", cls=DbtalkGroup, context_settings=CONTEXT_SETTINGS)
 def database() -> None:
     """Internal command group for generic database operations and JSONL transfer."""
 
@@ -465,13 +466,6 @@ def query_command(
     help="Maximum database connection time in seconds.",
 )
 @click.option(
-    "--write",
-    "write_enabled",
-    "-w",
-    is_flag=True,
-    help="Run exec in write-capable mode. Without it, exec uses a read-only session.",
-)
-@click.option(
     "--param",
     "parameters",
     multiple=True,
@@ -485,7 +479,6 @@ def exec_command(
     sql: str,
     timeout_seconds: int | None,
     connect_timeout_seconds: int | None,
-    write_enabled: bool,
     parameters: tuple[str, ...],
 ) -> None:
     """Execute one parameterized SQL statement against a DSN."""
@@ -498,7 +491,6 @@ def exec_command(
             parse_parameters(parameters),
             timeout_seconds=exec_timeout_from_context(ctx, timeout_seconds),
             connect_timeout_seconds=connect_timeout_seconds,
-            allow_write=write_enabled,
         )
     except DatabaseTransferError as error:
         raise click.ClickException(str(error)) from error

@@ -607,7 +607,6 @@ def test_query_and_exec_cli_use_dsn_environment(
         cli,
         [
             "exec",
-            "--write",
             "--dsn-env",
             "DBTALK_DSN_QUERY",
             "--sql",
@@ -622,57 +621,16 @@ def test_query_and_exec_cli_use_dsn_environment(
     assert "1 rows affected" in execution.output
 
 
-def test_query_and_exec_cli_require_explicit_write_and_support_timeouts(tmp_path: Path) -> None:
+def test_query_and_exec_cli_session_modes_and_timeouts(tmp_path: Path) -> None:
     path = tmp_path / "safeguards.db"
     create_database(path)
     dsn = f"sqlite:///{path.as_posix()}"
     runner = CliRunner()
 
-    missing_write = runner.invoke(
-        cli,
-        [
-            "exec",
-            "--dsn",
-            dsn,
-            "--sql",
-            "UPDATE users SET name = 'Grace' WHERE id = 1",
-        ],
-    )
-    assert missing_write.exit_code != 0
-    assert "database execution failed" in missing_write.output
-
-    read_only_exec = runner.invoke(
-        cli,
-        [
-            "exec",
-            "--dsn",
-            dsn,
-            "--sql",
-            "SELECT name FROM users WHERE id = 1",
-        ],
-    )
-    assert read_only_exec.exit_code == 0, read_only_exec.output
-
-    query_write = runner.invoke(
-        cli,
-        [
-            "query",
-            "--dsn",
-            dsn,
-            "--timeout",
-            "1",
-            "--sql",
-            "UPDATE users SET name = 'Grace' WHERE id = 1",
-        ],
-    )
-    assert query_write.exit_code != 0
-    assert "database query failed" in query_write.output
-
     execution = runner.invoke(
         cli,
         [
             "exec",
-            "-w",
             "--dsn",
             dsn,
             "--timeout",
@@ -683,6 +641,64 @@ def test_query_and_exec_cli_require_explicit_write_and_support_timeouts(tmp_path
     )
     assert execution.exit_code == 0, execution.output
     assert "1 rows affected" in execution.output
+
+    readable_exec = runner.invoke(
+        cli,
+        [
+            "exec",
+            "--dsn",
+            dsn,
+            "--sql",
+            "SELECT name FROM users WHERE id = 1",
+        ],
+    )
+    assert readable_exec.exit_code == 0, readable_exec.output
+
+    query_write = runner.invoke(
+        cli,
+        [
+            "query",
+            "--dsn",
+            dsn,
+            "--timeout",
+            "1",
+            "--sql",
+            "UPDATE users SET name = 'Ada' WHERE id = 1",
+        ],
+    )
+    assert query_write.exit_code != 0
+    assert "database query failed" in query_write.output
+    assert "attempt to write a readonly database" not in query_write.output
+
+    verbose_query = runner.invoke(
+        cli,
+        [
+            "query",
+            "-v",
+            "--dsn",
+            dsn,
+            "--sql",
+            "UPDATE users SET name = 'Ada' WHERE id = 1",
+        ],
+    )
+    assert verbose_query.exit_code != 0
+    assert "database query failed" in verbose_query.output
+    assert "sqlalchemy.exc.OperationalError" in verbose_query.output
+
+    for extra in ("--write", "-w"):
+        rejected = runner.invoke(
+            cli,
+            [
+                "exec",
+                extra,
+                "--dsn",
+                dsn,
+                "--sql",
+                "UPDATE users SET name = 'Ada' WHERE id = 1",
+            ],
+        )
+        assert rejected.exit_code != 0
+        assert "No such option" in rejected.output
 
     invalid_timeout = runner.invoke(
         cli,
@@ -698,6 +714,75 @@ def test_query_and_exec_cli_require_explicit_write_and_support_timeouts(tmp_path
     )
     assert invalid_timeout.exit_code != 0
     assert "x>=1" in invalid_timeout.output
+
+
+def test_exec_verbose_shows_sanitized_exception_details(tmp_path: Path) -> None:
+    path = tmp_path / "verbose.db"
+    create_database(path)
+    dsn = f"sqlite:///{path.as_posix()}"
+    runner = CliRunner()
+    sql = "UPDATE missing SET name = :name WHERE id = :id"
+
+    default = runner.invoke(
+        cli,
+        ["exec", "--dsn", dsn, "--sql", sql, "--param", 'name="secret"', "--param", "id=1"],
+    )
+    assert default.exit_code != 0
+    assert "database execution failed" in default.output
+    assert "OperationalError" not in default.output
+    assert "secret" not in default.output
+    assert "[parameters:]" not in default.output
+
+    verbose = runner.invoke(
+        cli,
+        [
+            "exec",
+            "-v",
+            "--dsn",
+            dsn,
+            "--sql",
+            sql,
+            "--param",
+            'name="secret"',
+            "--param",
+            "id=1",
+        ],
+    )
+    assert verbose.exit_code != 0
+    assert "database execution failed" in verbose.output
+    assert "sqlalchemy.exc.OperationalError" in verbose.output
+    assert "secret" not in verbose.output
+    assert "[parameters:]" not in verbose.output
+    assert "[SQL:" not in verbose.output
+
+    root_verbose = runner.invoke(
+        cli,
+        ["-v", "exec", "--dsn", dsn, "--sql", "SELECT 1"],
+    )
+    assert root_verbose.exit_code != 0
+    assert "No such option" in root_verbose.output
+    assert "-v" in root_verbose.output
+
+
+def test_settings_verbose_shows_exception_details_without_command_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "settings-verbose.db"
+    create_database(path)
+    monkeypatch.setenv("DBTALK_VERBOSE", "true")
+    result = CliRunner().invoke(
+        cli,
+        [
+            "exec",
+            "--dsn",
+            f"sqlite:///{path.as_posix()}",
+            "--sql",
+            "UPDATE missing SET name = 1",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "database execution failed" in result.output
+    assert "sqlalchemy.exc.OperationalError" in result.output
 
 
 def test_sqlite_statement_timeout_interrupts_query_and_cleans_up(tmp_path: Path) -> None:
