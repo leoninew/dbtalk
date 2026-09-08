@@ -3,7 +3,7 @@ requires = ["uv_build>=0.11.16,<0.12.0"]
 build-backend = "uv_build"
 
 [project]
-name = "dbtalk"
+name = "pomelo-dbtalk"
 version = "0.23.1"
 description = "MySQL and PostgreSQL backup/restore plus JSONL database transfer CLI."
 readme = "README.md"
@@ -38,6 +38,9 @@ dev = [
 
 [project.scripts]
 dbtalk = "dbtalk.cli:main"
+
+[tool.uv.build-backend]
+module-name = "dbtalk"
 
 [tool.ruff]
 line-length = 100

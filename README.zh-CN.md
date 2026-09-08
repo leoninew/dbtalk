@@ -17,7 +17,14 @@
 
 ## 安装
 
-需要 Python 3.12 或更高版本，以及 [uv](https://docs.astral.sh/uv/)。
+需要 Python 3.12 或更高版本。安装已发布的 CLI：
+
+```bash
+uv tool install pomelo-dbtalk
+dbtalk --help
+```
+
+从源码目录开发时使用 [uv](https://docs.astral.sh/uv/)：
 
 ```bash
 uv sync --all-groups
