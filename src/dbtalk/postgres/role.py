@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -17,13 +16,17 @@ from sqlalchemy.exc import SQLAlchemyError
 from tabulate import tabulate
 
 from dbtalk.cli_runtime import DbtalkCommand, DbtalkGroup
-from dbtalk.database.dsn import ParsedDsn, dsn_from_environment, parse_dsn
+from dbtalk.database.dsn import (
+    ParsedDsn,
+    dsn_from_environment,
+    parse_dsn,
+    password_from_environment,
+)
 from dbtalk.database.models import DatabaseOperationError
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 Profile = Literal["readonly", "readwrite", "migrator"]
 _IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]{0,62}$")
-_ENVIRONMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 @dataclass(frozen=True)
@@ -115,7 +118,7 @@ def disable_command(
     click.echo(f"PostgreSQL role disabled: {role_name}")
 
 
-@role.command("rotate-password", context_settings=CONTEXT_SETTINGS)
+@role.command("password", context_settings=CONTEXT_SETTINGS)
 @click.option("--dsn", "dsn_value", help="Complete PostgreSQL SQLAlchemy-style DSN.")
 @click.option("--dsn-env", help="Environment variable containing the PostgreSQL DSN.")
 @click.option("--role", "role_name", required=True, help="PostgreSQL role name.")
@@ -316,7 +319,7 @@ def create_role(parsed: ParsedDsn, role_name: str, password_env: str) -> None:
 
     _validate_management_dsn(parsed)
     _validate_identifier(role_name, "PostgreSQL role name")
-    password = _password_from_environment(password_env)
+    password = password_from_environment(password_env)
 
     def operation(connection: Connection) -> None:
         _execute_password_ddl(
@@ -347,7 +350,7 @@ def rotate_role_password(parsed: ParsedDsn, role_name: str, password_env: str) -
 
     _validate_management_dsn(parsed)
     _validate_identifier(role_name, "PostgreSQL role name")
-    password = _password_from_environment(password_env)
+    password = password_from_environment(password_env)
 
     def operation(connection: Connection) -> None:
         _reject_current_role(connection, role_name)
@@ -544,17 +547,6 @@ def _validate_identifier(value: str, label: str) -> None:
         raise DatabaseOperationError(f"{label} is invalid")
     if any(category(character).startswith("C") for character in value):
         raise DatabaseOperationError(f"{label} is invalid")
-
-
-def _password_from_environment(environment_name: str) -> str:
-    if not isinstance(environment_name, str) or not _ENVIRONMENT_PATTERN.fullmatch(
-        environment_name
-    ):
-        raise DatabaseOperationError("password environment variable name is invalid")
-    password = os.environ.get(environment_name)
-    if not password:
-        raise DatabaseOperationError("password environment variable is not set or is empty")
-    return password
 
 
 def _resource(

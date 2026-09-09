@@ -26,7 +26,7 @@ skills 会先通过相应的 `--help` 确认可用参数。CLI 保留 `--dsn DSN
 
 `dbtalk-postgres` 对本机 DSN 的唯一端口映射容器优先复用其 `docker exec` 和默认 Unix socket；未识别到唯一映射容器时使用本机 `pg_dump` / `pg_restore`，缺失时只使用配置的本地 PostgreSQL Docker image（默认 `postgres:18`）；不会拉取 image。它只处理 custom archive，不等同于 PostgreSQL 的物理备份或 JSONL 数据传输。`dbtalk-postgres schema` 独立处理 PostgreSQL database 生命周期，不调用 `pg_dump` / `pg_restore`。
 
-两个方言的 user/role、grant/revoke 命令均使用管理 DSN 和结构化参数，不接收原始 SQL。密码仅可通过 `--password-env` 引用；启用、禁用、轮换、删除、授权和撤销需要 `--yes`，且不能修改当前管理身份。
+两个方言的 user/role、grant/revoke 命令均使用管理 DSN 和结构化参数，不接收原始 SQL。密码仅可通过 `--password-env` 引用；`DBTALK_*` 名称在进程变量不存在时读取当前目录 `.env`。MySQL `password` 使用 `--host` 或 `--all-hosts` 二者之一。启用、禁用、轮换、删除、授权和撤销需要 `--yes`，且不能修改当前管理身份。
 
 命令行为、配置字段和参数以 [CLI 手册](../README.md#commands) 与运行时 `--help` 为准；skill 文件用于让 Codex 在合适的任务中选择并安全地运行这些命令。
 

@@ -27,6 +27,7 @@ DSN 的 host 从当前执行机解释。`localhost` 或 `127.0.0.1` 指向当前
 DBTALK_DSN_APP=mysql+pymysql://user:password@host:3306/database
 DBTALK_DSN_MYSQL_MANAGEMENT=mysql+pymysql://operator:password@host:3306/mysql
 DBTALK_DSN_MYSQL_ADMIN=mysql+pymysql://admin:password@host:3306/app
+DBTALK_MYSQL_ROOT_PASSWORD=change-me
 ```
 
 ## Database management
@@ -88,6 +89,6 @@ dbtalk mysql revoke --help
 dbtalk mysql permissions --help
 ```
 
-user 管理和 grant/revoke 需要 canonical 管理 DSN；user 操作可省略 database path，grant/revoke 未传 `--database` 时仍需要 DSN database。密码只能通过 `--password-env NAME` 引用，不得作为 CLI 值或输出内容。MySQL user 必须提供精确的 `--user` 和 `--host`；允许 `localhost`、单个 DNS 名称、IPv4、IPv6，以及字面量 `%` 账号 host。`%` 仅表示数据库中已存在的精确 `user@%` 账号，不得扩展为其他模式；仍不允许包含 `_` 或部分通配符的 host。
+user 管理和 grant/revoke 需要 canonical 管理 DSN；user 操作可省略 database path，grant/revoke 未传 `--database` 时仍需要 DSN database。密码只能通过 `--password-env NAME` 引用，不得作为 CLI 值或输出内容。`--password-env` 的 `DBTALK_*` 名称先读进程环境，变量不存在时才读当前目录 `.env`；进程变量存在但为空会失败且不回退，非 `DBTALK_*` 名称不读 dotenv。创建、启用、禁用和删除必须提供精确的 `--user` 和 `--host`；允许 `localhost`、单个 DNS 名称、IPv4、IPv6，以及字面量 `%` 账号 host。`password` 使用 `--host` 或 `--all-hosts` 二者之一：`--host` 只改一个精确账号，`--all-hosts` 轮换该用户名下已存在的每个 host，没有匹配账号时失败。`%` 仅表示数据库中已存在的精确 `user@%` 账号，不得扩展为其他模式；仍不允许包含 `_` 或部分通配符的 host。
 
 grant/revoke 支持 `readonly`、`readwrite`、`migrator` profile，或可重复的 `--privilege NAME`；两者互斥。权限层级为 `migrator > readwrite > readonly`：`readonly` 只读，`readwrite` 用于常规应用增删改查，`migrator` 再加入目标 database 的 DDL 和建库所需全局 `CREATE ON *.*`。MySQL 不区分建库 `CREATE` 与对象 `CREATE`，因此该能力为实例级能力，只用于受控迁移账号。固定 profile 不包含 `GRANT`、`REVOKE` 或 `GRANT OPTION`。`--database` 可省略，默认使用 DSN database。执行启用、禁用、轮换密码、删除、授权或撤销前，必须确认目标、资源、profile/privilege 和写入权限，并传入 `--yes`。`permissions list/show` 可查看当前 DSN 可见的原生授权，并支持主体和 database 筛选。不要传入完整 SQL；细粒度 privilege 由 MySQL 服务端决定是否允许。

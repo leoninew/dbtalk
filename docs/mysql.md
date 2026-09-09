@@ -15,7 +15,7 @@ uv run dbtalk mysql permissions --help
 | 命令 | 用途 |
 | --- | --- |
 | `schema list/create/drop` | 查看、创建或删除 MySQL schema/database。 |
-| `user list/create/enable/disable/rotate-password/drop` | 管理账号生命周期，不授予业务权限。 |
+| `user list/create/enable/disable/password/drop` | 管理账号生命周期，不授予业务权限。 |
 | `grant` / `revoke` | 按 profile 或原生 `--privilege` 授予、撤销权限。 |
 | `permissions list/show` | 查看当前 DSN 可见的原生授权，可按主体和 database 筛选。 |
 | `dump` / `restore` | 创建或恢复原生 SQL dump。 |
@@ -119,11 +119,15 @@ mysql:
 
 ```dotenv
 DBTALK_DSN_MYSQL_ADMIN=mysql+pymysql://admin:password@db.example:3306/app
+DBTALK_MYSQL_APP_PASSWORD=change-me
+DBTALK_MYSQL_ROOT_PASSWORD=change-me
 ```
 
 ```bash
 uv run dbtalk mysql user create --dsn-env DBTALK_DSN_MYSQL_ADMIN \
-  --user app_user --host app.example --password-env APP_PASSWORD
+  --user app_user --host app.example --password-env DBTALK_MYSQL_APP_PASSWORD
+uv run dbtalk mysql user password --dsn-env DBTALK_DSN_MYSQL_ADMIN \
+  --user root --all-hosts --password-env DBTALK_MYSQL_ROOT_PASSWORD --yes
 uv run dbtalk mysql grant --dsn-env DBTALK_DSN_MYSQL_ADMIN \
   --user app_user --host app.example --database app --profile readwrite --yes
 
@@ -132,7 +136,7 @@ uv run dbtalk mysql grant --dsn-env DBTALK_DSN_MYSQL_ADMIN \
   --privilege UPDATE --yes
 ```
 
-MySQL user 必须显式提供一个精确 host：`localhost`、单个 DNS 名称、IPv4 或 IPv6。`%`、`_` 和其他通配 host 均被拒绝。密码只能通过 `--password-env` 引用的环境变量输入；不会显示在命令输出、日志或错误中。
+创建、启用、禁用和删除必须提供精确 `--host`：`localhost`、单个 DNS 名称、IPv4、IPv6，或字面量 `%`。`password` 使用 `--host` 或 `--all-hosts` 二者之一；`--all-hosts` 会按现有账号轮换该用户名下的每个 host，没有匹配账号时失败。密码只能通过 `--password-env` 引用；`DBTALK_*` 名称在进程变量不存在时读取当前目录 `.env`，进程变量存在但为空会失败且不回退。非 `DBTALK_*` 名称不读取 dotenv。密码不会显示在命令输出、日志或错误中。
 
 授权目标 database 可省略，省略时使用 DSN database。profile 按 `migrator > readwrite > readonly` 包含：`readonly` 授予 `SELECT, SHOW VIEW`；`readwrite` 再授予 `INSERT, UPDATE, DELETE`；`migrator` 再授予目标 database 上的 DDL，以及创建 database 所需的全局 `CREATE ON *.*`。MySQL 无法将建库的 `CREATE` 与对象 `CREATE` 分离为两种权限，因此 `migrator` 的建库能力是实例级能力；只应授予受控迁移账号。固定 profile 不包含 `GRANT`、`REVOKE`、`GRANT OPTION` 或其他权限管理能力。也可重复指定 `--privilege NAME` 使用数据库服务端支持的细粒度权限；它与 `--profile` 互斥。
 
