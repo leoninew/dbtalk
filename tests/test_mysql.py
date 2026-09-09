@@ -28,6 +28,7 @@ from dbtalk.mysql.cli import (
     restore_database,
 )
 from dbtalk.mysql.client import docker_mapped_mysql_container
+from dbtalk.mysql.dump import mysqldump_command_args
 from dbtalk.settings import DumpRestoreConfig
 
 
@@ -61,6 +62,49 @@ class MysqlCommandTests(unittest.TestCase):
                 "backup.sql",
             ],
         )
+
+    def test_mysqldump_command_prefixes_ignore_table_with_target_database(self) -> None:
+        options = MysqlDumpOptions(
+            host="localhost",
+            port=3306,
+            user="root",
+            password="secret",
+            database="example",
+            output=Path("backup.sql"),
+            exclude_tables=("ops_system_logs", "usage_logs"),
+        )
+
+        command = mysqldump_command_args(options, Path("backup.sql"))
+
+        self.assertEqual(
+            command[command.index("--no-create-db") + 1 : command.index("-R")],
+            [
+                "--ignore-table=example.ops_system_logs",
+                "--ignore-table=example.usage_logs",
+            ],
+        )
+
+    def test_resolve_dump_options_rejects_blank_exclude_tables(self) -> None:
+        with self.assertRaisesRegex(click.ClickException, "excluded table name"):
+            resolve_dump_options(
+                DumpRestoreConfig(output_directory="data", client_image="mysql:8.0.39"),
+                MysqlDumpOverrides(
+                    host="localhost",
+                    port=3306,
+                    user="root",
+                    password="secret",
+                    target_database="example",
+                    dsn_database=None,
+                    output=Path("backup.sql"),
+                    exclude_tables=("\n",),
+                ),
+            )
+
+    def test_mysql_dump_help_lists_exclude_table(self) -> None:
+        result = CliRunner().invoke(main_command, ["mysql", "dump", "--help"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("--exclude-table", result.output)
 
     def test_generate_dump_command_quotes_sensitive_and_space_containing_values(
         self,

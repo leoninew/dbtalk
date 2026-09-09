@@ -62,6 +62,12 @@ postgres.add_command(permissions)
     type=click.IntRange(0, 9),
     help="Native custom archive compression level. Uses the client default when omitted.",
 )
+@click.option(
+    "--exclude-table",
+    "exclude_tables",
+    multiple=True,
+    help="Exclude a table object from the dump. Repeat for multiple tables.",
+)
 @click.pass_context
 def dump_command(
     ctx: click.Context,
@@ -70,6 +76,7 @@ def dump_command(
     target_database: str | None,
     output: Path | None,
     compression_level: int | None,
+    exclude_tables: tuple[str, ...],
 ) -> None:
     """Export one PostgreSQL database as a custom archive."""
 
@@ -84,6 +91,7 @@ def dump_command(
         connection,
         output,
         compression_level,
+        exclude_tables,
     )
     completed_output = dump_database(options)
     click.echo(f"PostgreSQL dump written to {completed_output}")

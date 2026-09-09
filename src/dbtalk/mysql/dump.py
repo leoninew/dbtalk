@@ -8,10 +8,11 @@ import shutil
 import tempfile
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from unicodedata import category
 
 import click
 
@@ -51,6 +52,7 @@ class MysqlDumpOptions:
     skip_definer: bool = False
     automatic_output: bool = False
     client_image: str = ""
+    exclude_tables: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -64,6 +66,7 @@ class MysqlDumpOverrides:
     output: Path | None
     archive: bool = False
     skip_definer: bool = False
+    exclude_tables: tuple[str, ...] = ()
 
 
 def mysqldump_command_args(
@@ -85,6 +88,7 @@ def mysqldump_command_args(
     args.append("--no-create-db")
     if options.skip_definer:
         args.append("--skip-definer")
+    args.extend(f"--ignore-table={options.database}.{name}" for name in options.exclude_tables)
     args.extend(
         [
             "-R",
@@ -127,6 +131,22 @@ def default_dump_output(
     directory.mkdir(parents=True, exist_ok=True)
     output = directory / f"{database}-{timestamp}.sql"
     return _next_available_output(output, archive=archive)
+
+
+def normalize_exclude_tables(names: Sequence[str]) -> tuple[str, ...]:
+    """Reject blank or control-character table names before invoking mysqldump."""
+
+    normalized: list[str] = []
+    for name in names:
+        if not isinstance(name, str):
+            raise click.ClickException("excluded table name must be a string")
+        stripped = name.strip()
+        if not stripped or any(
+            character == "\x00" or category(character).startswith("C") for character in stripped
+        ):
+            raise click.ClickException("excluded table name is invalid")
+        normalized.append(stripped)
+    return tuple(normalized)
 
 
 def resolve_dump_options(
@@ -173,6 +193,7 @@ def resolve_dump_options(
         skip_definer=overrides.skip_definer,
         automatic_output=automatic_output,
         client_image=config.client_image,
+        exclude_tables=normalize_exclude_tables(overrides.exclude_tables),
     )
 
 
@@ -354,6 +375,7 @@ def dump_with_docker(
         archive=False,
         skip_definer=options.skip_definer,
         client_image=options.client_image,
+        exclude_tables=options.exclude_tables,
     )
     command = ["docker", "run", "--name", container_name]
     command.extend(docker_host_gateway_args(options.host))

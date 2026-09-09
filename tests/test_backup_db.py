@@ -156,6 +156,7 @@ def test_load_backup_config_builds_each_target_dsn_from_its_connection(tmp_path:
             database="app",
             dsn="mysql+pymysql://user:password@mysql.example:3307/app",
             enabled=True,
+            exclude_tables=(),
         ),
         backup_db.BackupTarget(
             engine="postgres",
@@ -164,6 +165,7 @@ def test_load_backup_config_builds_each_target_dsn_from_its_connection(tmp_path:
             database="audit",
             dsn="postgresql+psycopg://user:password@postgres.example/audit",
             enabled=False,
+            exclude_tables=(),
         ),
     )
     assert config.connections == (
@@ -176,6 +178,82 @@ def test_load_backup_config_builds_each_target_dsn_from_its_connection(tmp_path:
             dsn="postgresql+psycopg://user:password@postgres.example/",
         ),
     )
+
+
+def test_load_backup_config_reads_exclude_tables(tmp_path: Path) -> None:
+    config_path = tmp_path / "backup-db.yaml"
+    config_path.write_text(
+        "output_directory: backups\n"
+        "target_validation:\n"
+        "  connection_timeout_seconds: 10\n"
+        "connections:\n"
+        "  - name: primary_postgres\n"
+        "    dsn: 'postgresql+psycopg://user:password@postgres.example/'\n"
+        "    databases:\n"
+        "      - name: app\n"
+        "        enabled: true\n"
+        "        exclude_tables:\n"
+        "          - ops_system_logs\n"
+        "          - usage_logs\n",
+        encoding="utf-8",
+    )
+
+    config = backup_db.load_backup_config(config_path)
+
+    assert config.targets[0].exclude_tables == ("ops_system_logs", "usage_logs")
+
+
+def test_load_backup_config_rejects_blank_exclude_tables(tmp_path: Path) -> None:
+    config_path = tmp_path / "backup-db.yaml"
+    config_path.write_text(
+        "output_directory: backups\n"
+        "target_validation:\n"
+        "  connection_timeout_seconds: 10\n"
+        "connections:\n"
+        "  - name: primary_postgres\n"
+        "    dsn: 'postgresql+psycopg://user:password@postgres.example/'\n"
+        "    databases:\n"
+        "      - name: app\n"
+        "        enabled: true\n"
+        "        exclude_tables:\n"
+        "          - ' '\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(backup_db.BackupError, match="exclude_tables"):
+        backup_db.load_backup_config(config_path)
+
+
+def test_run_dump_passes_exclude_tables(tmp_path: Path) -> None:
+    destination = tmp_path / "app.dump"
+    destination.write_bytes(b"archive")
+    captured_command: list[str] = []
+
+    def fake_popen(*args: object, **kwargs: object) -> FakeDumpProcess:
+        command = args[0]
+        assert isinstance(command, list)
+        captured_command.extend(str(part) for part in command)
+        return FakeDumpProcess("", "", 0)
+
+    target = backup_db.BackupTarget(
+        engine="postgres",
+        connection="postgres.example",
+        connection_name="primary_postgres",
+        database="app",
+        dsn="postgresql+psycopg://user:password@postgres.example/app",
+        enabled=True,
+        exclude_tables=("ops_system_logs", "usage_logs"),
+    )
+
+    with patch.object(backup_db.subprocess, "Popen", fake_popen):
+        backup_db.run_dump("dbtalk", target, destination)
+
+    assert captured_command[captured_command.index("--exclude-table") :] == [
+        "--exclude-table",
+        "ops_system_logs",
+        "--exclude-table",
+        "usage_logs",
+    ]
 
 
 def test_run_tests_runs_once_per_connection_with_its_base_dsn(tmp_path: Path) -> None:

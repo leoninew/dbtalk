@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import IO, Literal
+from unicodedata import category
 
 from dynaconf import Dynaconf
 from sqlalchemy.engine import URL, make_url
@@ -41,6 +42,7 @@ class BackupTarget:
     database: str
     dsn: str
     enabled: bool
+    exclude_tables: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -290,6 +292,25 @@ def _positive_config_integer(value: object, context: str) -> int:
     raise BackupError(f"{context} must be a positive integer")
 
 
+def _exclude_tables(values: Mapping[str, object], context: str) -> tuple[str, ...]:
+    raw = values.get("exclude_tables", [])
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise BackupError(f"{context}.exclude_tables must be a YAML list")
+    tables: list[str] = []
+    for index, item in enumerate(raw, 1):
+        if not isinstance(item, str):
+            raise BackupError(f"{context}.exclude_tables[{index}] must be a string")
+        stripped = item.strip()
+        if not stripped or any(
+            character == "\x00" or category(character).startswith("C") for character in stripped
+        ):
+            raise BackupError(f"{context}.exclude_tables[{index}] is invalid")
+        tables.append(stripped)
+    return tuple(tables)
+
+
 def load_backup_config(config_path: Path) -> BackupConfig:
     config_path = config_path.expanduser().resolve()
     if not config_path.is_file():
@@ -355,6 +376,7 @@ def load_backup_config(config_path: Path) -> BackupConfig:
                     database=database,
                     dsn=_target_dsn(connection_url, database),
                     enabled=_parse_enabled(database_config, database_context),
+                    exclude_tables=_exclude_tables(database_config, database_context),
                 )
             )
 
@@ -552,6 +574,8 @@ def run_dump(
     ]
     if target.engine == "mysql":
         command.append("--archive")
+    for table in target.exclude_tables:
+        command.extend(["--exclude-table", table])
 
     log_command = command.copy()
     log_command[log_command.index("--output") + 1] = destination.name

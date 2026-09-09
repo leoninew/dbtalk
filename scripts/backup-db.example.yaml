@@ -10,3 +10,5 @@ connections:
     databases:
       - name: "<database>"
         enabled: false
+        exclude_tables:
+          - "<optional_table>"

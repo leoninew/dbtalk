@@ -5,9 +5,11 @@ from __future__ import annotations
 import contextlib
 import shutil
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePath, PurePosixPath
+from unicodedata import category
 
 import click
 
@@ -33,6 +35,23 @@ class PostgresDumpOptions:
     output: Path
     client_image: str
     compression_level: int | None = None
+    exclude_tables: tuple[str, ...] = ()
+
+
+def normalize_exclude_tables(names: Sequence[str]) -> tuple[str, ...]:
+    """Reject blank or control-character table names before invoking pg_dump."""
+
+    normalized: list[str] = []
+    for name in names:
+        if not isinstance(name, str):
+            raise click.ClickException("excluded table name must be a string")
+        stripped = name.strip()
+        if not stripped or any(
+            character == "\x00" or category(character).startswith("C") for character in stripped
+        ):
+            raise click.ClickException("excluded table name is invalid")
+        normalized.append(stripped)
+    return tuple(normalized)
 
 
 def default_dump_output(
@@ -56,6 +75,7 @@ def resolve_dump_options(
     connection: PostgresConnection,
     output: Path | None,
     compression_level: int | None,
+    exclude_tables: Sequence[str] = (),
 ) -> PostgresDumpOptions:
     """Resolve CLI output and compression settings into dump options."""
 
@@ -74,6 +94,7 @@ def resolve_dump_options(
         output=resolved_output,
         client_image=config.client_image,
         compression_level=compression_level,
+        exclude_tables=normalize_exclude_tables(exclude_tables),
     )
 
 
@@ -101,6 +122,7 @@ def pg_dump_command_args(
     ]
     if options.compression_level is not None:
         args.append(f"--compress={options.compression_level}")
+    args.extend(f"--exclude-table={name}" for name in options.exclude_tables)
     return args
 
 
