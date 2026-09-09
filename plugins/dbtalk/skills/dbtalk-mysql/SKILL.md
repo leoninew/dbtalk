@@ -51,9 +51,10 @@ dump 需要 MySQL DSN 和明确 target database，按 `--database > DSN database
 ```bash
 dbtalk mysql dump --dsn-env DBTALK_DSN_APP --database app --output ./data/app.sql
 dbtalk mysql dump --dsn-env DBTALK_DSN_APP --database app --output ./data/app.sql --archive
+dbtalk mysql dump --dsn-env DBTALK_DSN_APP --database app --exclude-table audit_log
 ```
 
-`--archive` 写入 `.sql.gz`；输出路径没有 `.gz` 后缀时会自动追加。dump 固定保留顶层 `USE` 并传递 `--no-create-db`，不会生成 `CREATE DATABASE` 或 `DROP DATABASE`。`--skip-definer` 是显式可选项，只向原生 `mysqldump` 传递该参数；默认保留 `DEFINER`，客户端不支持时直接失败。非本机 MySQL host 使用连接压缩；`localhost` 与 `127.0.0.1` 不使用该参数。
+`--archive` 写入 `.sql.gz`；输出路径没有 `.gz` 后缀时会自动追加。dump 固定保留顶层 `USE` 并传递 `--no-create-db`，不会生成 `CREATE DATABASE` 或 `DROP DATABASE`。`--skip-definer` 是显式可选项，只向原生 `mysqldump` 传递该参数；默认保留 `DEFINER`，客户端不支持时直接失败。可重复的 `--exclude-table NAME` 跳过该表对象，映射为 `mysqldump --ignore-table=<目标库>.NAME`；不预检表是否存在，未知名称由 native client 处理。restore 不会建回被排除的表。非本机 MySQL host 使用连接压缩；`localhost` 与 `127.0.0.1` 不使用该参数。
 
 dump 先写同目录临时文件，成功且非空后才发布；客户端、复制、压缩或校验失败时清理临时文件，不替换已有最终制品。默认时间戳文件发生同秒冲突时追加稳定序号，不覆盖已有制品。完成后确认 CLI 输出的最终文件存在且大小合理。备份文件属于业务数据，放在被 Git 忽略的 `data/` 或其他受控目录中。
 

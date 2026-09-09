@@ -67,10 +67,12 @@ uv run dbtalk postgres dump \
   --dsn-env DBTALK_DSN_APP \
   --database app \
   --output ./data/app.dump \
-  --compression-level 6
+  --compression-level 6 \
+  --exclude-table ops_system_logs \
+  --exclude-table usage_logs
 ```
 
-dump 的目标按 `--database > DSN database > 失败` 决定，并始终生成 `pg_dump --format=custom` 的 `.dump` archive。省略 `--output` 时创建 `postgres.output_directory`，并生成 `<database>-<timestamp>.dump`；已有目录同样生成时间戳文件。显式文件路径的父目录必须已经存在。
+dump 的目标按 `--database > DSN database > 失败` 决定，并始终生成 `pg_dump --format=custom` 的 `.dump` archive。省略 `--output` 时创建 `postgres.output_directory`，并生成 `<database>-<timestamp>.dump`；已有目录同样生成时间戳文件。显式文件路径的父目录必须已经存在。可重复的 `--exclude-table NAME` 映射为 `pg_dump --exclude-table=NAME`，跳过该表对象（无 DDL、无数据）。不预检表是否存在；未知名称由 `pg_dump` 处理。restore 不会建回被排除的表。该选项与 JSONL `--exclude-table` 同名，但走 native dump，不是表数据搬运。
 
 custom archive 具有 PostgreSQL 原生内部压缩，不能等同于 `.sql.gz`。不要给 `.dump` 再套 gzip；`pg_restore` 可以直接读取它。`--compression-level` 仅接受 `0` 到 `9`；省略时保留 native client 的默认 archive 压缩行为。
 

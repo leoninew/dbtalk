@@ -47,9 +47,11 @@ dbtalk postgres schema drop --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT --name app_
 ```bash
 dbtalk postgres dump --dsn-env DBTALK_DSN_APP --database app --output ./data/app.dump
 dbtalk postgres dump --dsn-env DBTALK_DSN_APP --database app --compression-level 6
+dbtalk postgres dump --dsn-env DBTALK_DSN_APP --database app \
+  --exclude-table ops_system_logs --exclude-table usage_logs
 ```
 
-dump 需要明确 target database，按 `--database > DSN database > 失败` 决定，并只输出 custom `.dump` archive，默认在 `postgres.output_directory` 中生成带时间戳的文件。archive 已使用 PostgreSQL 原生内部压缩；不要使用 MySQL 的 `.sql.gz` 语义或另行 gzip。
+dump 需要明确 target database，按 `--database > DSN database > 失败` 决定，并只输出 custom `.dump` archive，默认在 `postgres.output_directory` 中生成带时间戳的文件。archive 已使用 PostgreSQL 原生内部压缩；不要使用 MySQL 的 `.sql.gz` 语义或另行 gzip。可重复的 `--exclude-table NAME` 映射为 `pg_dump --exclude-table=NAME`，跳过该表对象；不预检表是否存在。restore 不会建回被排除的表。该选项与 JSONL `--exclude-table` 同名，但走 native dump。
 
 ## Restore
 

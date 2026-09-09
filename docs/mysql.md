@@ -66,7 +66,8 @@ uv run dbtalk mysql dump \
   --database app \
   --output ./data/app.sql \
   --skip-definer \
-  --archive
+  --archive \
+  --exclude-table audit_log
 ```
 
 | 选项 | 说明 |
@@ -76,8 +77,9 @@ uv run dbtalk mysql dump \
 | `--output FILE_OR_DIRECTORY` | SQL 制品输出文件或已有输出目录。 |
 | `--archive` | 写入 gzip 压缩 dump。 |
 | `--skip-definer` | 将原生 `mysqldump --skip-definer` 透传给客户端。默认保留 `DEFINER`。 |
+| `--exclude-table NAME` | 可重复。跳过该表对象（无 DDL、无数据），映射为 `mysqldump --ignore-table=<目标库>.NAME`。不预检表是否存在。 |
 
-dump 的目标按 `--database > DSN database > 失败` 决定。dump 固定使用 `-B` 保留顶层 `USE`，并始终传递 `--no-create-db`，不会生成 `CREATE DATABASE` 或 `DROP DATABASE`。`--skip-definer` 不通过 `sed` 或其他文本替换实现；客户端不支持该参数时直接失败。
+dump 的目标按 `--database > DSN database > 失败` 决定。dump 固定使用 `-B` 保留顶层 `USE`，并始终传递 `--no-create-db`，不会生成 `CREATE DATABASE` 或 `DROP DATABASE`。`--skip-definer` 不通过 `sed` 或其他文本替换实现；客户端不支持该参数时直接失败。`--exclude-table` 与 JSONL 同名，但走 native client：restore 不会建回被排除的表；未知表名交给 `mysqldump` 处理。
 
 省略 `--output` 时使用配置中的 `mysql.output_directory`（默认 `data/`），生成 `<database>-<timestamp>.sql`。同秒已有文件时追加稳定序号，不覆盖已有制品。dump 先写同目录临时文件，成功且非空后才发布；`--archive` 的 gzip 文件也遵循相同规则。
 

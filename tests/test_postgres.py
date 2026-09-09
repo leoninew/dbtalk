@@ -144,6 +144,39 @@ def test_pg_dump_command_uses_custom_format_and_optional_compression() -> None:
     assert "secret" not in command
 
 
+def test_pg_dump_command_excludes_named_tables() -> None:
+    options = replace(
+        dump_options(Path("backup.dump")),
+        exclude_tables=("ops_system_logs", "usage_logs"),
+    )
+
+    command = pg_dump_command_args(options, Path("backup.dump"))
+
+    assert command[-2:] == [
+        "--exclude-table=ops_system_logs",
+        "--exclude-table=usage_logs",
+    ]
+    assert "secret" not in command
+
+
+def test_resolve_dump_options_rejects_blank_exclude_tables(tmp_path: Path) -> None:
+    with pytest.raises(click.ClickException, match="excluded table name"):
+        resolve_dump_options(
+            DumpRestoreConfig(output_directory="data", client_image="postgres:18"),
+            connection(),
+            tmp_path / "backup.dump",
+            None,
+            ("",),
+        )
+
+
+def test_postgres_dump_help_lists_exclude_table() -> None:
+    result = CliRunner().invoke(main_command, ["postgres", "dump", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "--exclude-table" in result.output
+
+
 def test_default_dump_output_and_resolution_follow_directory_contract(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

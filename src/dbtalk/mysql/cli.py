@@ -94,6 +94,12 @@ mysql.add_command(permissions)
     is_flag=True,
     help="Write the SQL dump as a gzip file.",
 )
+@click.option(
+    "--exclude-table",
+    "exclude_tables",
+    multiple=True,
+    help="Exclude a table object from the dump. Repeat for multiple tables.",
+)
 @click.pass_context
 def dump_command(  # noqa: PLR0913 - Click passes one argument for each CLI option.
     ctx: click.Context,
@@ -103,6 +109,7 @@ def dump_command(  # noqa: PLR0913 - Click passes one argument for each CLI opti
     output: Path | None,
     archive: bool,
     skip_definer: bool,
+    exclude_tables: tuple[str, ...],
 ) -> None:
     """Export a MySQL database."""
     settings = context_settings(ctx)
@@ -119,6 +126,7 @@ def dump_command(  # noqa: PLR0913 - Click passes one argument for each CLI opti
             output=output,
             archive=archive,
             skip_definer=skip_definer,
+            exclude_tables=exclude_tables,
         ),
     )
     completed_output = dump_database(options)
