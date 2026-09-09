@@ -11,12 +11,13 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import IO, Literal
 
 from dynaconf import Dynaconf
 from sqlalchemy.engine import URL, make_url
@@ -24,7 +25,7 @@ from sqlalchemy.exc import ArgumentError
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPOSITORY_ROOT = SCRIPT_DIR.parent
-DEFAULT_CONFIG_PATH = SCRIPT_DIR / "backup_db.yaml"
+DEFAULT_CONFIG_PATH = SCRIPT_DIR / "backup-db.yaml"
 ENV_PREFIX = "DBTALK"
 Engine = Literal["mysql", "postgres"]
 DSN_CREDENTIALS_PATTERN = re.compile(
@@ -122,7 +123,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--config",
         type=Path,
         default=DEFAULT_CONFIG_PATH,
-        help="Backup YAML path (default: scripts/backup_db.yaml).",
+        help="Backup YAML path (default: scripts/backup-db.yaml).",
     )
     test_parser.add_argument(
         "--dbtalk-command",
@@ -191,12 +192,74 @@ def _target_dsn(url: URL, database: str) -> str:
     return url.set(database=database).render_as_string(hide_password=False)
 
 
+def _redact_credentials(text: str) -> str:
+    return DSN_CREDENTIALS_PATTERN.sub(r"\1<redacted>@", text)
+
+
 def _subprocess_failure_detail(result: subprocess.CompletedProcess[str]) -> str:
-    detail = result.stderr.strip() or result.stdout.strip()
+    detail = (result.stderr or "").strip() or (result.stdout or "").strip()
     if not detail:
         return ""
     normalized = " ".join(detail.split())
-    return DSN_CREDENTIALS_PATTERN.sub(r"\1<redacted>@", normalized)[:1000]
+    return _redact_credentials(normalized)[:1000]
+
+
+def _pump_subprocess_stream(source: IO[str], destination: IO[str], chunks: list[str]) -> None:
+    for line in source:
+        chunks.append(line)
+        destination.write(_redact_credentials(line))
+        destination.flush()
+
+
+def run_streaming_command(
+    command: Sequence[str],
+    *,
+    cwd: Path,
+    env: Mapping[str, str],
+) -> subprocess.CompletedProcess[str]:
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=dict(env),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
+    if process.stdout is None or process.stderr is None:
+        process.kill()
+        process.wait()
+        raise BackupError(f"dbtalk dump did not provide output streams: {command[0]}")
+
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+    stdout_thread = threading.Thread(
+        target=_pump_subprocess_stream,
+        args=(process.stdout, sys.stdout, stdout_chunks),
+        name="backup-db-stdout",
+    )
+    stderr_thread = threading.Thread(
+        target=_pump_subprocess_stream,
+        args=(process.stderr, sys.stderr, stderr_chunks),
+        name="backup-db-stderr",
+    )
+    stdout_thread.start()
+    stderr_thread.start()
+    try:
+        returncode = process.wait()
+    except BaseException:
+        process.kill()
+        process.wait()
+        raise
+    finally:
+        stdout_thread.join()
+        stderr_thread.join()
+    return subprocess.CompletedProcess(
+        list(command),
+        returncode,
+        "".join(stdout_chunks),
+        "".join(stderr_chunks),
+    )
 
 
 def _parse_enabled(values: Mapping[str, object], context: str) -> bool:
@@ -494,14 +557,12 @@ def run_dump(
     log_command[log_command.index("--output") + 1] = destination.name
     logging.info("dbtalk command=%s", shlex.join(log_command))
     child_environment = dict(environment) if environment is not None else os.environ.copy()
+    child_environment.setdefault("PYTHONUNBUFFERED", "1")
     child_environment[dsn_env] = target.dsn
-    result = subprocess.run(
+    result = run_streaming_command(
         command,
         cwd=REPOSITORY_ROOT,
         env=child_environment,
-        capture_output=True,
-        text=True,
-        check=False,
     )
     if result.returncode != 0:
         detail = _subprocess_failure_detail(result)

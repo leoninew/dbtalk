@@ -4,7 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-SCRIPT = Path(__file__).parents[1] / "scripts" / "generate_dsn_password.py"
+SCRIPT = Path(__file__).parents[1] / "scripts" / "password-gen.py"
 DSN_SAFE_SYMBOLS = "-._~"
 
 
@@ -52,7 +52,7 @@ def test_generates_default_length_unescaped_dsn_password_without_symbols() -> No
 
 
 def test_accepts_a_longer_password_length() -> None:
-    password = run_script("-l", "24", "--symbols")
+    password = run_script("-l", "24", "-s")
 
     assert len(password) == 24
     assert any(character in DSN_SAFE_SYMBOLS for character in password)
