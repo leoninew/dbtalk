@@ -15,7 +15,7 @@ uv run dbtalk postgres permissions --help
 | 命令 | 用途 |
 | --- | --- |
 | `schema list/create/drop` | 查看、创建或删除 PostgreSQL schema/database。 |
-| `role list/create/enable/disable/rotate-password/drop` | 管理 role 生命周期，不授予业务权限。 |
+| `role list/create/enable/disable/password/drop` | 管理 role 生命周期，不授予业务权限。 |
 | `grant` / `revoke` | 按 profile 或原生 `--privilege` 授予、撤销 database/schema 权限。 |
 | `permissions list/show` | 查看当前 DSN 可见的原生授权，可按 role、database、schema 筛选。 |
 | `dump` / `restore` | 创建或恢复单库 custom archive。 |
@@ -102,11 +102,12 @@ uv run dbtalk postgres restore \
 
 ```dotenv
 DBTALK_DSN_POSTGRES_ADMIN=postgresql+psycopg://admin:password@db.example:5432/app
+DBTALK_POSTGRES_APP_PASSWORD=change-me
 ```
 
 ```bash
 uv run dbtalk postgres role create --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
-  --role app_role --password-env APP_PASSWORD
+  --role app_role --password-env DBTALK_POSTGRES_APP_PASSWORD
 uv run dbtalk postgres grant --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
   --role app_role --schema app --profile readwrite --yes
 
@@ -115,7 +116,7 @@ uv run dbtalk postgres grant --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
   --privilege CREATE --yes
 ```
 
-新 role 默认是 `LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`。密码只能通过 `--password-env` 引用的环境变量输入；不会显示在命令输出、日志或错误中。
+新 role 默认是 `LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`。密码只能通过 `--password-env` 引用；`DBTALK_*` 名称在进程变量不存在时读取当前目录 `.env`，进程变量存在但为空会失败且不回退。非 `DBTALK_*` 名称不读取 dotenv。密码不会显示在命令输出、日志或错误中。
 
 授权目标支持 database 或 schema，未指定时使用 DSN database。profile 按 `migrator > readwrite > readonly` 包含：`readonly` 提供基础只读权限；以 schema 为目标时，`readwrite` 再提供现有表的 `SELECT, INSERT, UPDATE, DELETE` 以及 sequence 的 `USAGE, SELECT, UPDATE`；`migrator` 再授予 schema `CREATE`，并在 database 目标上授予 `CREATE`，同时设置 role 的全局 `CREATEDB` 属性以允许建库。`CREATEDB` 不是某个 database/schema 上的普通授权，撤销 `migrator` 会将该 role 设为 `NOCREATEDB`。固定 profile 不添加 `GRANT OPTION` 或角色管理能力。schema profile 不修改 default privileges，因此不会自动覆盖未来创建的表或序列；migrator 必须拥有它需要 `ALTER` 或 `DROP` 的现有对象。
 

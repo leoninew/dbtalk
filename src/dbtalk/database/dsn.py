@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -24,6 +25,8 @@ ASYNC_DRIVERS = {
     "postgresql": "postgresql+psycopg",
 }
 DOTENV_DSN_PREFIX = "DBTALK_DSN_"
+DOTENV_PASSWORD_PREFIX = "DBTALK_"
+_ENVIRONMENT_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 @dataclass(frozen=True)
@@ -99,6 +102,22 @@ def dsn_from_environment(environment_name: str | None, *, async_mode: bool = Fal
     if not value:
         raise DatabaseOperationError("DSN environment variable is not set")
     return parse_dsn(value, async_mode=async_mode)
+
+
+def password_from_environment(environment_name: str) -> str:
+    """Load a password from the process environment or a ``DBTALK_*`` dotenv value."""
+
+    if not isinstance(environment_name, str) or not _ENVIRONMENT_NAME_PATTERN.fullmatch(
+        environment_name
+    ):
+        raise DatabaseOperationError("password environment variable name is invalid")
+    value = os.environ.get(environment_name)
+    if value is None and environment_name.startswith(DOTENV_PASSWORD_PREFIX):
+        dotenv_value = dotenv_values(Path.cwd() / ".env").get(environment_name)
+        value = dotenv_value if isinstance(dotenv_value, str) else None
+    if not value:
+        raise DatabaseOperationError("password environment variable is not set or is empty")
+    return value
 
 
 def sqlite_dsn(path: Path) -> str:

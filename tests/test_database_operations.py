@@ -26,7 +26,13 @@ from dbtalk.database.connection import (
     create_async_client,
     create_client,
 )
-from dbtalk.database.dsn import dsn_from_environment, dsn_metadata, parse_dsn, sqlite_dsn
+from dbtalk.database.dsn import (
+    dsn_from_environment,
+    dsn_metadata,
+    parse_dsn,
+    password_from_environment,
+    sqlite_dsn,
+)
 from dbtalk.database.models import (
     ColumnDefinition,
     DatabaseDriver,
@@ -178,6 +184,63 @@ def test_dsn_from_environment_does_not_fallback_for_empty_or_non_dsn_names(
         dsn_from_environment("DBTALK_DSN_APP")
     with pytest.raises(DatabaseOperationError, match="environment variable is not set"):
         dsn_from_environment("APP_DSN")
+
+
+def test_password_from_environment_reads_current_dotenv_for_dbtalk_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / ".env").write_text(
+        "DBTALK_MYSQL_ROOT_PASSWORD=from-dotenv\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("DBTALK_MYSQL_ROOT_PASSWORD", raising=False)
+
+    assert password_from_environment("DBTALK_MYSQL_ROOT_PASSWORD") == "from-dotenv"
+
+
+def test_password_from_environment_ignores_dotenv_variants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / ".env.local").write_text(
+        "DBTALK_MYSQL_ROOT_PASSWORD=from-local\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("DBTALK_MYSQL_ROOT_PASSWORD", raising=False)
+
+    with pytest.raises(DatabaseOperationError, match="password environment"):
+        password_from_environment("DBTALK_MYSQL_ROOT_PASSWORD")
+
+
+def test_password_from_environment_prefers_process_value_over_dotenv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / ".env").write_text(
+        "DBTALK_MYSQL_ROOT_PASSWORD=from-dotenv\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DBTALK_MYSQL_ROOT_PASSWORD", "from-process")
+
+    assert password_from_environment("DBTALK_MYSQL_ROOT_PASSWORD") == "from-process"
+
+
+def test_password_from_environment_does_not_fallback_for_empty_or_non_dbtalk_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / ".env").write_text(
+        "DBTALK_MYSQL_ROOT_PASSWORD=from-dotenv\nAPP_PASSWORD=from-dotenv\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DBTALK_MYSQL_ROOT_PASSWORD", "")
+    monkeypatch.delenv("APP_PASSWORD", raising=False)
+
+    with pytest.raises(DatabaseOperationError, match="password environment"):
+        password_from_environment("DBTALK_MYSQL_ROOT_PASSWORD")
+    with pytest.raises(DatabaseOperationError, match="password environment"):
+        password_from_environment("APP_PASSWORD")
 
 
 def test_database_clients_accept_urls_and_reject_wrong_async_mode(tmp_path: Path) -> None:

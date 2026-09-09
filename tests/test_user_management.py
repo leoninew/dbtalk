@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 from click.testing import CliRunner
@@ -499,7 +499,7 @@ def test_mysql_user_cli_dispatches_all_lifecycle_operations(
         [
             "mysql",
             "user",
-            "rotate-password",
+            "password",
             *common,
             "--password-env",
             "APP_PASSWORD",
@@ -522,6 +522,131 @@ def test_mysql_user_cli_dispatches_all_lifecycle_operations(
     disable.assert_called_once_with(parsed, "app_user", "app.example")
     rotate.assert_called_once_with(parsed, "app_user", "app.example", "APP_PASSWORD")
     drop.assert_called_once_with(parsed, "app_user", "app.example")
+
+
+def test_mysql_rotate_password_all_hosts_rotates_matching_accounts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parsed = mysql_dsn()
+    rotate = Mock()
+    monkeypatch.setattr(mysql_user, "resolve_management_dsn", lambda *_: parsed)
+    monkeypatch.setattr(
+        mysql_user,
+        "list_users",
+        lambda _: (
+            mysql_user.MysqlUserRecord("app", "api.example", False),
+            mysql_user.MysqlUserRecord("root", "%", False),
+            mysql_user.MysqlUserRecord("root", "localhost", False),
+        ),
+    )
+    monkeypatch.setattr(mysql_user, "rotate_user_password", rotate)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "mysql",
+            "user",
+            "password",
+            "--dsn-env",
+            "MYSQL_ADMIN_DSN",
+            "--user",
+            "root",
+            "--all-hosts",
+            "--password-env",
+            "DBTALK_MYSQL_ROOT_PASSWORD",
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert rotate.call_args_list == [
+        call(parsed, "root", "%", "DBTALK_MYSQL_ROOT_PASSWORD"),
+        call(parsed, "root", "localhost", "DBTALK_MYSQL_ROOT_PASSWORD"),
+    ]
+    assert "MySQL user password rotated: root@%" in result.output
+    assert "MySQL user password rotated: root@localhost" in result.output
+
+
+def test_mysql_rotate_password_all_hosts_fails_when_user_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parsed = mysql_dsn()
+    rotate = Mock()
+    monkeypatch.setattr(mysql_user, "resolve_management_dsn", lambda *_: parsed)
+    monkeypatch.setattr(
+        mysql_user,
+        "list_users",
+        lambda _: (mysql_user.MysqlUserRecord("app", "api.example", False),),
+    )
+    monkeypatch.setattr(mysql_user, "rotate_user_password", rotate)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "mysql",
+            "user",
+            "password",
+            "--dsn-env",
+            "MYSQL_ADMIN_DSN",
+            "--user",
+            "root",
+            "--all-hosts",
+            "--password-env",
+            "DBTALK_MYSQL_ROOT_PASSWORD",
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "no MySQL accounts found for user root" in result.output
+    rotate.assert_not_called()
+
+
+def test_mysql_rotate_password_requires_host_or_all_hosts_exclusively(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolve_dsn = Mock()
+    monkeypatch.setattr(mysql_user, "resolve_management_dsn", resolve_dsn)
+
+    missing = CliRunner().invoke(
+        cli,
+        [
+            "mysql",
+            "user",
+            "password",
+            "--dsn-env",
+            "MYSQL_ADMIN_DSN",
+            "--user",
+            "root",
+            "--password-env",
+            "DBTALK_MYSQL_ROOT_PASSWORD",
+            "--yes",
+        ],
+    )
+    both = CliRunner().invoke(
+        cli,
+        [
+            "mysql",
+            "user",
+            "password",
+            "--dsn-env",
+            "MYSQL_ADMIN_DSN",
+            "--user",
+            "root",
+            "--host",
+            "localhost",
+            "--all-hosts",
+            "--password-env",
+            "DBTALK_MYSQL_ROOT_PASSWORD",
+            "--yes",
+        ],
+    )
+
+    assert missing.exit_code != 0
+    assert "provide --host or --all-hosts" in missing.output
+    assert both.exit_code != 0
+    assert "--host and --all-hosts are mutually exclusive" in both.output
+    resolve_dsn.assert_not_called()
 
 
 def test_mysql_grant_and_revoke_cli_dispatch_profile_operations(
@@ -625,7 +750,7 @@ def test_postgresql_role_cli_dispatches_all_lifecycle_operations(
         [
             "postgres",
             "role",
-            "rotate-password",
+            "password",
             *common,
             "--password-env",
             "APP_PASSWORD",
@@ -730,8 +855,12 @@ def test_postgresql_errors_are_redacted_and_role_dsn_is_dialect_specific(
 @pytest.mark.parametrize(
     ("command", "expected"),
     [
-        (["mysql", "user", "--help"], {"create", "disable", "rotate-password"}),
-        (["postgres", "role", "--help"], {"create", "disable", "rotate-password"}),
+        (["mysql", "user", "--help"], {"create", "disable", "password"}),
+        (["postgres", "role", "--help"], {"create", "disable", "password"}),
+        (
+            ["mysql", "user", "password", "--help"],
+            {"--all-hosts", "--host", "--password-env", "--yes"},
+        ),
         (["mysql", "grant", "--help"], {"--database", "--profile", "--yes"}),
         (["postgres", "grant", "--help"], {"--database", "--schema", "--profile"}),
     ],

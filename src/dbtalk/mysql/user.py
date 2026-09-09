@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -17,7 +16,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from tabulate import tabulate
 
 from dbtalk.cli_runtime import DbtalkCommand, DbtalkGroup
-from dbtalk.database.dsn import ParsedDsn, dsn_from_environment, parse_dsn
+from dbtalk.database.dsn import (
+    ParsedDsn,
+    dsn_from_environment,
+    parse_dsn,
+    password_from_environment,
+)
 from dbtalk.database.models import DatabaseOperationError
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
@@ -26,7 +30,6 @@ _USER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_.$-]{0,31}$")
 _HOST_PATTERN = re.compile(
     r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*$"
 )
-_ENVIRONMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 @dataclass(frozen=True)
@@ -123,11 +126,16 @@ def disable_command(
     click.echo(f"MySQL user disabled: {_display_account(user_name, host)}")
 
 
-@user.command("rotate-password", context_settings=CONTEXT_SETTINGS)
+@user.command("password", context_settings=CONTEXT_SETTINGS)
 @click.option("--dsn", "dsn_value", help="Complete MySQL SQLAlchemy-style DSN.")
 @click.option("--dsn-env", help="Environment variable containing the MySQL DSN.")
 @click.option("--user", "user_name", required=True, help="MySQL account name.")
-@click.option("--host", required=True, help="Exact MySQL account host.")
+@click.option("--host", help="Exact MySQL account host.")
+@click.option(
+    "--all-hosts",
+    is_flag=True,
+    help="Rotate the password for every existing host of --user.",
+)
 @click.option(
     "--password-env", required=True, help="Environment variable containing the new password."
 )
@@ -136,20 +144,32 @@ def rotate_password_command(
     dsn_value: str | None,
     dsn_env: str | None,
     user_name: str,
-    host: str,
+    host: str | None,
+    all_hosts: bool,
     password_env: str,
     yes: bool,
 ) -> None:
-    """Rotate one MySQL account password."""
+    """Rotate one MySQL account password, or every host of --user."""
 
     _require_yes(yes, "rotate a MySQL user password")
+    if host and all_hosts:
+        raise click.UsageError("--host and --all-hosts are mutually exclusive")
+    if not host and not all_hosts:
+        raise click.UsageError("provide --host or --all-hosts")
     try:
-        rotate_user_password(
-            resolve_management_dsn(dsn_value, dsn_env), user_name, host, password_env
-        )
+        parsed = resolve_management_dsn(dsn_value, dsn_env)
+        if all_hosts:
+            hosts = tuple(record.host for record in list_users(parsed) if record.user == user_name)
+            if not hosts:
+                raise DatabaseOperationError(f"no MySQL accounts found for user {user_name}")
+        else:
+            assert host is not None
+            hosts = (host,)
+        for account_host in hosts:
+            rotate_user_password(parsed, user_name, account_host, password_env)
+            click.echo(f"MySQL user password rotated: {_display_account(user_name, account_host)}")
     except DatabaseOperationError as error:
         raise click.ClickException(str(error)) from error
-    click.echo(f"MySQL user password rotated: {_display_account(user_name, host)}")
 
 
 @user.command("drop", context_settings=CONTEXT_SETTINGS)
@@ -319,7 +339,7 @@ def create_user(parsed: ParsedDsn, user_name: str, host: str, password_env: str)
 
     _validate_management_dsn(parsed)
     _validate_account(user_name, host)
-    password = _password_from_environment(password_env)
+    password = password_from_environment(password_env)
     _run_management_operation(
         parsed,
         lambda connection: connection.execute(
@@ -346,7 +366,7 @@ def rotate_user_password(parsed: ParsedDsn, user_name: str, host: str, password_
 
     _validate_management_dsn(parsed)
     _validate_account(user_name, host)
-    password = _password_from_environment(password_env)
+    password = password_from_environment(password_env)
 
     def operation(connection: Connection) -> None:
         connection.execute(
@@ -544,17 +564,6 @@ def _validate_resource_name(value: str, label: str) -> None:
         raise DatabaseOperationError(f"{label} must not be blank")
     if any(character == "\x00" or category(character).startswith("C") for character in value):
         raise DatabaseOperationError(f"{label} must not contain control characters")
-
-
-def _password_from_environment(environment_name: str) -> str:
-    if not isinstance(environment_name, str) or not _ENVIRONMENT_PATTERN.fullmatch(
-        environment_name
-    ):
-        raise DatabaseOperationError("password environment variable name is invalid")
-    password = os.environ.get(environment_name)
-    if not password:
-        raise DatabaseOperationError("password environment variable is not set or is empty")
-    return password
 
 
 def _reject_current_account(connection: Connection, user_name: str, host: str) -> None:
