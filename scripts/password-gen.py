@@ -56,6 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Number of passwords to generate (default: 1; minimum: 1).",
     )
     parser.add_argument(
+        "-s",
         "--symbols",
         action="store_true",
         help="Require one or more URL-unreserved symbols: -._~.",
