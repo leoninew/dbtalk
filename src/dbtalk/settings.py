@@ -70,10 +70,7 @@ def load_settings(project_root: Path | None = None) -> Settings:
         logging=load_logging_settings(config.get("logging")),
         mysql=load_mysql_config(config.get("mysql")),
         database=load_database_transfer_config(config.get("database")),
-        postgres=load_dump_restore_config(
-            config.get("postgres"),
-            group="postgres",
-        ),
+        postgres=load_dump_restore_config(config.get("postgres"), group="postgres"),
     )
 
 
@@ -86,11 +83,17 @@ def bundled_settings_files() -> list[Path]:
     return [config_path] if config_path.is_file() else []
 
 
-def mapping_config(value: Any) -> Mapping[str, object]:
+def mapping_config(value: Any, context: str = "config") -> Mapping[str, object]:
     if value is None:
         return {}
-    assert isinstance(value, Mapping)
-    return value
+    if isinstance(value, Mapping):
+        return value
+    env_name = f"{ENV_PREFIX}_{context.upper()}"
+    raise ValueError(
+        f"{context} must be a mapping; scalar {env_name} replaced the {context}: "
+        f"section from dbtalk.yaml. Unset {env_name} or use {env_name}__FIELD for "
+        "nested overrides."
+    )
 
 
 def int_config(value: object) -> int:
@@ -108,7 +111,7 @@ def bool_config(value: object) -> bool:
 
 
 def load_logging_settings(value: Any) -> LoggingSettings:
-    config = mapping_config(value)
+    config = mapping_config(value, "logging")
     level = config.get("level", "INFO")
     log_format = config.get("format", "%(asctime)s %(levelname)s %(name)s: %(message)s")
     assert isinstance(level, str)
@@ -121,7 +124,7 @@ def load_dump_restore_config(
     *,
     group: str,
 ) -> DumpRestoreConfig:
-    config = mapping_config(value)
+    config = mapping_config(value, group)
     output_directory = config.get("output_directory", "data")
     client_image = config.get("client_image")
     if not isinstance(output_directory, str) or not output_directory.strip():
@@ -135,7 +138,7 @@ def load_dump_restore_config(
 
 
 def load_mysql_config(value: Any) -> MySQLConfig:
-    config = mapping_config(value)
+    config = mapping_config(value, "mysql")
     dump_restore = load_dump_restore_config(config, group="mysql")
     return MySQLConfig(
         output_directory=dump_restore.output_directory,
@@ -145,7 +148,7 @@ def load_mysql_config(value: Any) -> MySQLConfig:
 
 
 def load_database_transfer_config(value: Any) -> DatabaseTransferConfig:
-    config = mapping_config(value)
+    config = mapping_config(value, "database")
     return DatabaseTransferConfig(
         query_timeout_seconds=load_positive_seconds(config, "query_timeout_seconds"),
         exec_timeout_seconds=load_positive_seconds(config, "exec_timeout_seconds"),

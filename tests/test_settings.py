@@ -138,6 +138,16 @@ def test_database_query_and_exec_timeouts_can_be_overridden(
     assert settings.database.exec_timeout_seconds == 45
 
 
+def test_scalar_database_env_does_not_replace_the_mapping_section(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    write_settings(tmp_path)
+    monkeypatch.setenv("DBTALK_DATABASE", "pomelo_orbit")
+
+    with pytest.raises(ValueError, match="Unset DBTALK_DATABASE"):
+        load_settings(tmp_path)
+
+
 def test_postgres_client_image_can_be_overridden(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     write_settings(tmp_path)
     monkeypatch.setenv("DBTALK_POSTGRES__CLIENT_IMAGE", "registry.example/postgres:19")
