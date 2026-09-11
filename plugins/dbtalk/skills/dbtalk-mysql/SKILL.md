@@ -32,7 +32,7 @@ DBTALK_MYSQL_ROOT_PASSWORD=change-me
 
 ## Database management
 
-数据库生命周期操作使用 `dbtalk mysql schema`，与 query/exec、账号管理和 dump/restore 分离。管理 DSN 必须指向一个已有 MySQL 数据库，并使用具有相应数据库管理权限的账号。
+数据库生命周期操作使用 `dbtalk mysql schema`，与 query/exec、账号管理和 dump/restore 分离。管理 DSN 可省略 database path，并使用具有相应数据库管理权限的账号。`schema drop` 以 `--name` 为删除目标，连接后检查当前会话数据库。
 
 ```bash
 dbtalk mysql schema list --dsn-env DBTALK_DSN_MYSQL_MANAGEMENT
@@ -40,7 +40,7 @@ dbtalk mysql schema create --dsn-env DBTALK_DSN_MYSQL_MANAGEMENT --name app_db
 dbtalk mysql schema drop --dsn-env DBTALK_DSN_MYSQL_MANAGEMENT --name app_db --yes
 ```
 
-先执行 `list` 核对目标。创建后只报告数据库名。删除不可逆，只有用户明确授权删除指定目标时才传入 `--yes`；不猜测目标、不执行任意 SQL、不创建或管理账号。
+先执行 `list` 核对目标。创建后只报告数据库名。删除不可逆，只有用户明确授权删除指定目标时才传入 `--yes`；不能删除当前会话正在连接的数据库。不猜测目标、不执行任意 SQL、不创建或管理账号。
 
 ## Dump
 
@@ -90,6 +90,6 @@ dbtalk mysql revoke --help
 dbtalk mysql permissions --help
 ```
 
-user 管理和 grant/revoke 需要 canonical 管理 DSN；user 操作可省略 database path，grant/revoke 未传 `--database` 时仍需要 DSN database。密码只能通过 `--password-env NAME` 引用，不得作为 CLI 值或输出内容。`--password-env` 的 `DBTALK_*` 名称先读进程环境，变量不存在时才读当前目录 `.env`；进程变量存在但为空会失败且不回退，非 `DBTALK_*` 名称不读 dotenv。创建、启用、禁用和删除必须提供精确的 `--user` 和 `--host`；允许 `localhost`、单个 DNS 名称、IPv4、IPv6，以及字面量 `%` 账号 host。`password` 使用 `--host` 或 `--all-hosts` 二者之一：`--host` 只改一个精确账号，`--all-hosts` 轮换该用户名下已存在的每个 host，没有匹配账号时失败。`%` 仅表示数据库中已存在的精确 `user@%` 账号，不得扩展为其他模式；仍不允许包含 `_` 或部分通配符的 host。
+user 管理和 grant/revoke 需要 canonical 管理 DSN；user 操作可省略 database path，grant/revoke 未传 `--database` 时仍需要 DSN database。密码只能通过 `--password-env NAME` 引用，不得作为 CLI 值或输出内容。`--password-env` 的 `DBTALK_*` 名称先读进程环境，变量不存在时才读当前目录 `.env`；进程变量存在但为空会失败且不回退，非 `DBTALK_*` 名称不读 dotenv。创建、启用和禁用必须提供精确的 `--user` 和 `--host`；允许 `localhost`、单个 DNS 名称、IPv4、IPv6，以及字面量 `%` 账号 host。`password`、`user drop`、`grant` 和 `revoke` 使用 `--host` 或 `--all-hosts` 二者之一：`--host` 只改一个精确账号，`--all-hosts` 作用于该用户名下已存在的每个 host，没有匹配账号时失败。`%` 仅表示数据库中已存在的精确 `user@%` 账号，不得扩展为其他模式；仍不允许包含 `_` 或部分通配符的 host。
 
 grant/revoke 支持 `readonly`、`readwrite`、`migrator` profile，或可重复的 `--privilege NAME`；两者互斥。权限层级为 `migrator > readwrite > readonly`：`readonly` 只读，`readwrite` 用于常规应用增删改查，`migrator` 再加入目标 database 的 DDL 和建库所需全局 `CREATE ON *.*`。MySQL 不区分建库 `CREATE` 与对象 `CREATE`，因此该能力为实例级能力，只用于受控迁移账号。固定 profile 不包含 `GRANT`、`REVOKE` 或 `GRANT OPTION`。`--database` 可省略，默认使用 DSN database。执行启用、禁用、轮换密码、删除、授权或撤销前，必须确认目标、资源、profile/privilege 和写入权限，并传入 `--yes`。`permissions list/show` 可查看当前 DSN 可见的原生授权，并支持主体和 database 筛选。不要传入完整 SQL；细粒度 privilege 由 MySQL 服务端决定是否允许。

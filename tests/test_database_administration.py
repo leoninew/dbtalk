@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 from unittest.mock import Mock
 
@@ -18,17 +18,24 @@ from dbtalk.database.models import DatabaseOperationError
 
 
 class FakeResult:
-    def __init__(self, rows: list[tuple[str]]) -> None:
+    def __init__(self, rows: list[tuple[Any, ...]]) -> None:
         self._rows = rows
 
-    def fetchall(self) -> list[tuple[str]]:
+    def fetchall(self) -> list[tuple[Any, ...]]:
         return self._rows
+
+    def fetchone(self) -> tuple[Any, ...] | None:
+        return self._rows[0] if self._rows else None
+
+    def scalar(self) -> Any:
+        row = self.fetchone()
+        return None if row is None else row[0]
 
 
 class FakeConnection:
-    def __init__(self, dialect: Any, rows: list[tuple[str]] | None = None) -> None:
+    def __init__(self, dialect: Any, rows: Sequence[tuple[Any, ...]] | None = None) -> None:
         self.dialect = dialect
-        self.rows = rows or []
+        self.rows = list(rows or ())
         self.execution_options_value: dict[str, object] | None = None
         self.statements: list[str] = []
         self.error: SQLAlchemyError | None = None
@@ -113,6 +120,13 @@ def test_list_databases_uses_dialect_sql_and_disposes_engine(
             "CREATE DATABASE",
         ),
         (
+            mysql_database,
+            parsed_mysql(),
+            MysqlDialect(),
+            mysql_database.drop_database,
+            "DROP DATABASE",
+        ),
+        (
             postgres_database,
             parsed_postgresql(),
             PostgreSQLDialect(),  # type: ignore[no-untyped-call]
@@ -136,30 +150,86 @@ def test_database_lifecycle_operations_quote_names(
 
     operation(parsed, name)
 
-    assert connection.statements == [f"{prefix} {dialect.identifier_preparer.quote(name)}"]
+    quoted = f"{prefix} {dialect.identifier_preparer.quote(name)}"
+    assert connection.statements[-1] == quoted
     assert engine.disposed
 
 
-def test_postgresql_cannot_drop_the_connected_database(monkeypatch: pytest.MonkeyPatch) -> None:
-    create_engine = Mock()
-    monkeypatch.setattr(postgres_database, "create_engine", create_engine)
+@pytest.mark.parametrize(
+    ("module", "dsn", "dialect", "current_database", "probe"),
+    [
+        (
+            mysql_database,
+            "mysql+pymysql://admin:secret@db.example/",
+            MysqlDialect(),
+            "app",
+            "SELECT DATABASE()",
+        ),
+        (
+            postgres_database,
+            "postgresql+psycopg://admin:secret@db.example/",
+            PostgreSQLDialect(),  # type: ignore[no-untyped-call]
+            "app",
+            "SELECT current_database()",
+        ),
+    ],
+)
+def test_drop_refuses_the_currently_connected_database(
+    monkeypatch: pytest.MonkeyPatch,
+    module: Any,
+    dsn: str,
+    dialect: Any,
+    current_database: str,
+    probe: str,
+) -> None:
+    connection = FakeConnection(dialect, rows=[(current_database,)])
+    engine = FakeEngine(connection)
+    monkeypatch.setattr(module, "create_engine", lambda _: engine)
 
-    with pytest.raises(DatabaseOperationError, match="different maintenance database"):
-        postgres_database.drop_database(parsed_postgresql(), "postgres")
+    with pytest.raises(DatabaseOperationError, match="currently connected database"):
+        module.drop_database(parse_dsn(dsn), current_database)
 
-    create_engine.assert_not_called()
+    assert connection.statements == [probe]
+    assert engine.disposed
 
 
-def test_postgresql_drop_requires_a_maintenance_database(monkeypatch: pytest.MonkeyPatch) -> None:
-    create_engine = Mock()
-    monkeypatch.setattr(postgres_database, "create_engine", create_engine)
+@pytest.mark.parametrize(
+    ("module", "dsn", "dialect", "current_database", "probe"),
+    [
+        (
+            mysql_database,
+            "mysql+pymysql://admin:secret@db.example/",
+            MysqlDialect(),
+            None,
+            "SELECT DATABASE()",
+        ),
+        (
+            postgres_database,
+            "postgresql+psycopg://admin:secret@db.example/",
+            PostgreSQLDialect(),  # type: ignore[no-untyped-call]
+            "postgres",
+            "SELECT current_database()",
+        ),
+    ],
+)
+def test_drop_allows_an_omitted_database_path_when_session_differs(
+    monkeypatch: pytest.MonkeyPatch,
+    module: Any,
+    dsn: str,
+    dialect: Any,
+    current_database: str | None,
+    probe: str,
+) -> None:
+    rows = [] if current_database is None else [(current_database,)]
+    connection = FakeConnection(dialect, rows=rows)
+    engine = FakeEngine(connection)
+    monkeypatch.setattr(module, "create_engine", lambda _: engine)
 
-    with pytest.raises(DatabaseOperationError, match="maintenance database"):
-        postgres_database.drop_database(
-            parse_dsn("postgresql+psycopg://admin:secret@db.example/"), "app"
-        )
+    module.drop_database(parse_dsn(dsn), "app")
 
-    create_engine.assert_not_called()
+    quoted = dialect.identifier_preparer.quote("app")
+    assert connection.statements == [probe, f"DROP DATABASE {quoted}"]
+    assert engine.disposed
 
 
 @pytest.mark.parametrize("name", ["", "   ", "bad\x00name", "bad\nname"])

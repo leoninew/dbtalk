@@ -32,7 +32,7 @@ DBTALK_POSTGRES_APP_PASSWORD=change-me
 
 ## Database management
 
-数据库生命周期操作使用 `dbtalk postgres schema`，与 query/exec、role 管理和 dump/restore 分离。管理 DSN 必须连接到目标以外的维护库，通常为 `postgres`，并使用具有建库或删库权限的账号。
+数据库生命周期操作使用 `dbtalk postgres schema`，与 query/exec、role 管理和 dump/restore 分离。管理 DSN 可省略 database path，并使用具有建库或删库权限的账号。`schema drop` 以 `--name` 为删除目标，连接后检查当前会话数据库。
 
 ```bash
 dbtalk postgres schema list --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT
@@ -40,7 +40,7 @@ dbtalk postgres schema create --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT --name ap
 dbtalk postgres schema drop --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT --name app_db --yes
 ```
 
-先执行 `list` 核对目标。删除不可逆，只有用户明确授权删除指定目标时才传入 `--yes`；不能删除管理 DSN 正在连接的数据库。存在其他连接时应如实报告失败，不主动终止其他会话；不猜测目标、不执行任意 SQL、不创建或管理 role。
+先执行 `list` 核对目标。删除不可逆，只有用户明确授权删除指定目标时才传入 `--yes`；不能删除当前会话正在连接的数据库。存在其他连接时应如实报告失败，不主动终止其他会话；不猜测目标、不执行任意 SQL、不创建或管理 role。
 
 ## Dump
 
