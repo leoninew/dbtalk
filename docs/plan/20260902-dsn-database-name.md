@@ -1,5 +1,5 @@
 # 放宽 DSN 数据库名称要求
-最后修改时间: 2026-09-02 10:10:26
+最后修改时间: 2026-09-11 13:38:24
 
 Review status: Accepted
 
@@ -41,7 +41,12 @@ Review status: Accepted
    - 修改 `tests/test_postgres.py`：覆盖 dump、restore 的同一优先级、无库名 DSN 搭配 `--database`、无 target 的专用失败、libpq URI / `.pgpass` / 默认输出名均使用最终目标，以及 CLI help。
    - 审阅现有 MySQL/PostgreSQL grant/revoke、schema 与 permission 测试；仅在它们原本依赖全局 parser 错误时补充各自已经承诺的局部 precondition 测试。
 
-6. 同步用户与代理文档。
+6. 修正 PostgreSQL grant/revoke 的连接库选择。
+   - `postgres grant` / `postgres revoke` 允许同时提供 `--database` 与 `--schema`：`--database` 选择连接库，`--schema` 为 schema 授权目标。
+   - 无库名管理 DSN 仅传 `--schema` 时返回专用错误，不得落到驱动默认库。
+   - 更新 `src/dbtalk/postgres/role.py`、授权测试、`docs/postgres.md` 与 `dbtalk-postgres` skill。
+
+7. 同步用户与代理文档。
    - 修改 `docs/database.md`，说明 server DSN 的 database name 在 URL 语法上可选，且 export/import 例外地要求明确库名。
    - 修改 `docs/mysql.md`、`docs/postgres.md`，写明 dump/restore 的 target precedence、无库名 DSN 与 `--database` 的合法组合，以及无 target 时的失败；删除 `mysqlrestore.database` 的描述。
    - 修改用户正在重命名的 `plugins/dbtalk/skills/dbtalk/SKILL.md`、以及 `dbtalk-mysql`、`dbtalk-postgres` skill，使 agent 选择的命令和约束与 CLI 一致；保留用户已存在的 git rename，不还原路径。
@@ -57,6 +62,8 @@ Review status: Accepted
 - `src/dbtalk/mysql/restore.py`
 - `src/dbtalk/postgres/cli.py`
 - `src/dbtalk/postgres/client.py`
+- `src/dbtalk/postgres/role.py`
+- `tests/test_user_management.py`
 - `tests/test_database_operations.py`
 - `tests/test_mysql.py`
 - `tests/test_postgres.py`
@@ -89,6 +96,7 @@ Review status: Accepted
 - PostgreSQL native client 的最终 database 必须同时用于 libpq URI、`.pgpass` 和自动输出名，避免连接、认证与制品命名指向不同目标。
 - 不得为了通过旧测试重新引入 database 配置回退或无提示的默认库。
 - 当前工作区含用户已暂存的 skill 路径 rename；实施时在新路径上更新内容，不修改其版本控制意图。
+- 用户确认沿用本计划，使 PostgreSQL grant/revoke 的 `--database` 与 `--schema` 可同时提供，并要求在原 SpecFlow 体现设计后继续 Implementation。
 
 ## Rollback
 

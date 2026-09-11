@@ -76,7 +76,7 @@ dbtalk postgres revoke --help
 dbtalk postgres permissions --help
 ```
 
-role 管理和 grant/revoke 使用管理 DSN。新 role 默认没有超级用户、建库、建 role、复制或绕过 RLS 能力；密码只能通过 `--password-env NAME` 引用。`--password-env` 的 `DBTALK_*` 名称先读进程环境，变量不存在时才读当前目录 `.env`；进程变量存在但为空会失败且不回退，非 `DBTALK_*` 名称不读 dotenv。grant/revoke 的 `--database` 与 `--schema` 最多提供一个，省略时使用 DSN database；支持 `readonly`、`readwrite`、`migrator` profile，或可重复的 `--privilege NAME`，两者互斥。权限层级为 `migrator > readwrite > readonly`：`readonly` 只读，schema 目标的 `readwrite` 用于常规应用增删改查和 sequence 使用，`migrator` 再加入 DDL，并设置 role 的全局 `CREATEDB` 属性以允许建库。撤销 `migrator` 会设为 `NOCREATEDB`。固定 profile 不添加 `GRANT OPTION` 或角色管理能力。细粒度 privilege 不由 dbtalk allowlist 过滤，是否可授权由 PostgreSQL 服务端决定。
+role 管理和 grant/revoke 使用管理 DSN。新 role 默认没有超级用户、建库、建 role、复制或绕过 RLS 能力；密码只能通过 `--password-env NAME` 引用。`--password-env` 的 `DBTALK_*` 名称先读进程环境，变量不存在时才读当前目录 `.env`；进程变量存在但为空会失败且不回退，非 `DBTALK_*` 名称不读 dotenv。grant/revoke 的 `--database` 可与 `--schema` 同时提供：只传 `--database` 时授权该库；只传 `--schema` 时必须有 DSN database，并在该库上授权 schema；两者同时传入时连接到 `--database`，再对该库中的 `--schema` 授权。两者都省略时使用 DSN database。支持 `readonly`、`readwrite`、`migrator` profile，或可重复的 `--privilege NAME`，两者互斥。权限层级为 `migrator > readwrite > readonly`：`readonly` 只读，schema 目标的 `readwrite` 用于常规应用增删改查和 sequence 使用，`migrator` 再加入 DDL，并设置 role 的全局 `CREATEDB` 属性以允许建库。撤销 `migrator` 会设为 `NOCREATEDB`。固定 profile 不添加 `GRANT OPTION` 或角色管理能力。细粒度 privilege 不由 dbtalk allowlist 过滤，是否可授权由 PostgreSQL 服务端决定。
 
 `permissions list/show` 使用 PostgreSQL 原生权限查询；list 默认显示当前 DSN 可见结果，并支持 role、database、schema 筛选，show 要求 role 并支持资源筛选。
 

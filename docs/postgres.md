@@ -30,7 +30,7 @@ DBTALK_DSN_APP=postgresql+psycopg://backup:password@db.example.com:5432/app?sslm
 
 `dbtalk` 向 native client 传递无密码的 libpq URI；本机客户端读取临时 `.pgpass`，Docker client 通过子进程环境读取密码。正常输出、日志和错误摘要不会回显密码。`.env.local` 或其他 dotenv 变体不会被加载。
 
-PostgreSQL URL 的 database path 在语法上可省略。`schema list/create/drop`、role 和权限查看可使用这种 DSN。`schema drop` 以 `--name` 为删除目标，连接后检查当前会话数据库，不能删除当前正在连接的数据库。dump/restore 的目标按 `--database > DSN database > 失败` 决定；grant/revoke 未显式给出 `--database` 或 `--schema` 时仍需要 DSN database。
+PostgreSQL URL 的 database path 在语法上可省略。`schema list/create/drop`、role 和权限查看可使用这种 DSN。`schema drop` 以 `--name` 为删除目标，连接后检查当前会话数据库，不能删除当前正在连接的数据库。dump/restore 的目标按 `--database > DSN database > 失败` 决定。grant/revoke 在只授权 database 或两者都省略时，未给出 `--database` 则回退 DSN database；`--schema` 授权必须能确定所在库：`--database` 与 DSN database 二选一，可同时提供 `--database` 和 `--schema`，此时连接到 `--database` 再对 `--schema` 授权。
 
 对于 `localhost` 或 `127.0.0.1`，若请求端口唯一对应一个运行中的 Docker PostgreSQL 容器，dump 和 restore 优先复用该容器：通过 `docker exec` 调用容器内 `pg_dump` / `pg_restore`，使用容器默认 Unix socket；dump 的 archive 通过临时文件和 `docker cp` 取回，restore 通过 `docker cp` 放入后导入并清理。未识别到唯一映射容器时，才优先使用本机 `pg_dump` / `pg_restore`；本机客户端缺失时使用配置的 Docker image：
 
@@ -114,13 +114,16 @@ uv run dbtalk postgres grant --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
   --role app_role --schema app --profile readwrite --yes
 
 uv run dbtalk postgres grant --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
+  --role app_role --database app --schema public --profile migrator --yes
+
+uv run dbtalk postgres grant --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
   --role app_role --schema app --privilege USAGE \
   --privilege CREATE --yes
 ```
 
 新 role 默认是 `LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`。密码只能通过 `--password-env` 引用；`DBTALK_*` 名称在进程变量不存在时读取当前目录 `.env`，进程变量存在但为空会失败且不回退。非 `DBTALK_*` 名称不读取 dotenv。密码不会显示在命令输出、日志或错误中。
 
-授权目标支持 database 或 schema，未指定时使用 DSN database。profile 按 `migrator > readwrite > readonly` 包含：`readonly` 提供基础只读权限；以 schema 为目标时，`readwrite` 再提供现有表的 `SELECT, INSERT, UPDATE, DELETE` 以及 sequence 的 `USAGE, SELECT, UPDATE`；`migrator` 再授予 schema `CREATE`，并在 database 目标上授予 `CREATE`，同时设置 role 的全局 `CREATEDB` 属性以允许建库。`CREATEDB` 不是某个 database/schema 上的普通授权，撤销 `migrator` 会将该 role 设为 `NOCREATEDB`。固定 profile 不添加 `GRANT OPTION` 或角色管理能力。schema profile 不修改 default privileges，因此不会自动覆盖未来创建的表或序列；migrator 必须拥有它需要 `ALTER` 或 `DROP` 的现有对象。
+授权目标可以是 database 或 schema。只传 `--database` 时授权该库；只传 `--schema` 时使用 DSN database 作为连接库；两者同时传入时连接到 `--database`，再对该库中的 `--schema` 授权。未指定 `--database` 和 `--schema` 时使用 DSN database。profile 按 `migrator > readwrite > readonly` 包含：`readonly` 提供基础只读权限；以 schema 为目标时，`readwrite` 再提供现有表的 `SELECT, INSERT, UPDATE, DELETE` 以及 sequence 的 `USAGE, SELECT, UPDATE`；`migrator` 再授予 schema `CREATE`，并在 database 目标上授予 `CREATE`，同时设置 role 的全局 `CREATEDB` 属性以允许建库。`CREATEDB` 不是某个 database/schema 上的普通授权，撤销 `migrator` 会将该 role 设为 `NOCREATEDB`。固定 profile 不添加 `GRANT OPTION` 或角色管理能力。schema profile 不修改 default privileges，因此不会自动覆盖未来创建的表或序列；migrator 必须拥有它需要 `ALTER` 或 `DROP` 的现有对象。
 
 ```bash
 uv run dbtalk postgres permissions list --dsn-env DBTALK_DSN_POSTGRES_ADMIN

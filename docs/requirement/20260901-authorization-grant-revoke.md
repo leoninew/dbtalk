@@ -1,5 +1,5 @@
 # 授权与权限管理
-最后修改时间: 2026-09-01 22:41:50
+最后修改时间: 2026-09-11 13:38:24
 
 Review status: Accepted
 Flow mode: standard
@@ -57,10 +57,24 @@ Stage: Requirement
      --yes
    ```
 
-3. 管理员撤销同一项零散权限时使用 `revoke` 的相同结构化参数；撤销不得误删其他 profile 或无关权限。
-4. MySQL 管理员向精确的 `user@host` 授予 database 级 profile 或细粒度单项权限；具体权限是否可授予由 MySQL 服务端判断。
-5. 管理员使用 `permissions list` / `permissions show` 查看主体当前权限、来源 profile 和细粒度授权，结果不包含凭据。
-6. 自动化系统重复执行已审核的 profile 或单项授权；命令输出主体、目标和权限摘要，但不输出密码、DSN 或未请求的权限文本。
+3. 管理员使用无库名管理 DSN，为业务库的 `public` schema 授予 `migrator`：
+
+   ```bash
+   dbtalk postgres grant \
+     --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
+     --role app_role \
+     --database app \
+     --schema public \
+     --profile migrator \
+     --yes
+   ```
+
+   `--database` 选择连接库，`--schema` 是该库内的授权目标。不得在无库名 DSN 上只传 `--schema`，以免落到驱动默认库。
+
+4. 管理员撤销同一项零散权限时使用 `revoke` 的相同结构化参数；撤销不得误删其他 profile 或无关权限。
+5. MySQL 管理员向精确的 `user@host` 授予 database 级 profile 或细粒度单项权限；具体权限是否可授予由 MySQL 服务端判断。
+6. 管理员使用 `permissions list` / `permissions show` 查看主体当前权限、来源 profile 和细粒度授权，结果不包含凭据。
+7. 自动化系统重复执行已审核的 profile 或单项授权；命令输出主体、目标和权限摘要，但不输出密码、DSN 或未请求的权限文本。
 
 ## Permission model
 
@@ -80,7 +94,7 @@ Profile 按权限集合组织为 `migrator > readwrite > readonly`。建库能�
 
 细粒度权限不由 dbtalk 维护 allowlist。调用者提供结构化权限名称，工具生成对应方言的授权语句；是否允许该权限由当前管理 DSN 在数据库服务端决定。调用者仍不能传入 SQL 片段、逗号分隔 privilege 字符串或任意完整 `GRANT` / `REVOKE` 语句。
 
-目标原则：每条授权或撤销命令都必须给出一个明确 DSN 和目标 role/user；目标 schema/database 为可选参数，未提供时在当前 DSN 指向的 schema/database 上处理。主体和资源的方言参数仍保持差异：PostgreSQL 使用 `--role` 与可选的 `--database` / `--schema`，MySQL 使用 `--user`、`--host` 与可选的 `--database`。
+目标原则：每条授权或撤销命令都必须给出一个明确 DSN 和目标 role/user；目标 schema/database 为可选参数，未提供时在当前 DSN 指向的 schema/database 上处理。主体和资源的方言参数仍保持差异：PostgreSQL 使用 `--role` 以及 `--database` / `--schema`，MySQL 使用 `--user`、`--host` 与可选的 `--database`。PostgreSQL 的 `--database` 与 `--schema` 可以同时提供：只传 `--database` 时授权该库；只传 `--schema` 时必须能从 DSN 得到连接库；两者同时传入时连接到 `--database`，再对该库中的 `--schema` 授权。无库名 DSN 且未传 `--database` 时，仅 `--schema` 必须失败。
 
 原生权限名称由数据库校验；dbtalk 不预先拦截当前数据库能够合法处理的细粒度权限。授权失败时直接报告数据库返回的非敏感错误。
 
@@ -94,7 +108,7 @@ Profile 按权限集合组织为 `migrator > readwrite > readonly`。建库能�
 - [ ] MySQL 与 PostgreSQL 均提供同级的 `grant` / `revoke` 权限命令，帮助文本列出 profile 与细粒度权限模式。
 - [ ] `grant` / `revoke` 支持 `readonly`、`readwrite`、`migrator` profile；权限集合按 `migrator > readwrite > readonly` 包含。`migrator` 具有 DDL、DML 和建库能力，但不添加 `GRANT OPTION` 或角色管理能力。
 - [ ] profile 模式与 `--privilege` 模式互斥；`--privilege` 可重复指定，不由 dbtalk 维护 privilege allowlist，具体合法性由数据库服务端校验。
-- [ ] 每条授权/撤销命令必须提供明确 DSN 和目标 role/user；目标 schema/database 可选，未提供时使用当前 DSN 指向的 schema/database。PostgreSQL 使用 database/schema 资源参数，MySQL 使用 database 资源参数。
+- [ ] 每条授权/撤销命令必须提供明确 DSN 和目标 role/user；目标 schema/database 可选，未提供时使用当前 DSN 指向的 schema/database。PostgreSQL 使用 `--database` / `--schema`，二者可同时提供：`--database` 选择连接库，`--schema` 为 schema 授权目标。无库名 DSN 仅传 `--schema` 时失败。MySQL 使用 database 资源参数。
 - [ ] 撤销 profile 或单项权限只作用于请求的权限集合，不隐式撤销其他 profile 或额外单项授权。
 - [ ] 权限命令不接受原始 `GRANT` / `REVOKE` SQL；超出权限命令专门语义的特殊 SQL 才能由管理员审核后单独执行。
 - [ ] 提供统一的 `permissions list` / `permissions show` 权限查看命令；查看直接使用 MySQL/PostgreSQL 原生权限查询，原生命令返回什么就展示什么，并确保不泄露连接凭据。
@@ -113,6 +127,7 @@ Profile 按权限集合组织为 `migrator > readwrite > readonly`。建库能�
 - 常规权限操作统一由 `grant` / `revoke` 负责；不再用 `database exec --write` 补充其已覆盖的 profile 或权限。
 - 细粒度 privilege 不由 dbtalk allowlist 控制；只要当前 DSN 在数据库侧有权执行，工具就生成并执行对应授权语句。
 - 每条授权语句都必须绑定明确 DSN 和目标 role/user；目标 schema/database 可省略，省略时使用当前 DSN 指向的资源。
+- PostgreSQL `--database` 与 `--schema` 可同时提供，不是互斥资源开关。`--database` 在 schema 授权中表示连接库；无库名管理 DSN 不得把 `--schema` 落到驱动默认库。
 - `user` / `role` 负责主体管理，不隐式授予权限；`schema` 负责 MySQL schema/database 与 PostgreSQL schema/database 管理，不承担授权逻辑。
 - 授权模型采用“固定 profile + 由数据库服务端校验的细粒度 privilege”双层结构。
 - 正式 profile 固定为 `readonly`、`readwrite` 和 `migrator`，按 `migrator > readwrite > readonly` 组织，不保留旧 profile 名称兼容层。
@@ -130,6 +145,7 @@ Profile 按权限集合组织为 `migrator > readwrite > readonly`。建库能�
 - 不维护 privilege allowlist 会把高风险判断交给数据库管理权限；管理 DSN 一旦权限过大，任意细粒度授权都可能扩大访问范围。
 - MySQL 与 PostgreSQL 同名权限的语义不同，必须逐方言定义映射并用测试锁定。
 - PostgreSQL 未来对象的权限继承涉及 default privileges；当前 profile 只作用于已有对象时，文档必须明确边界。
+- PostgreSQL schema 授权依赖当前连接库。无库名 DSN 只传 `--schema` 时，旧实现会落到驱动默认库；必须要求 `--database` 或 DSN database。
 - 高风险细粒度权限（如 `drop`、`alter`、`execute`）若开放过宽，可能绕过最小权限原则。
 
 ## User review notes
@@ -146,3 +162,4 @@ Profile 按权限集合组织为 `migrator > readwrite > readonly`。建库能�
 - 用户确认将 `database` 命令改为 `schema` 命令，MySQL 与 PostgreSQL 均使用该命令管理 schema/database，并移除旧 `database` 命令；权限仍由 `grant/revoke` 管理。
 - 用户采纳 `permissions list/show` 的参数建议：`list` 默认展示当前 DSN 可见权限并支持主体、schema/database 筛选；`show` 要求主体，资源筛选可选。
 - 用户最终采纳 `readonly`、`readwrite`、`migrator`：`readonly` 只读，`readwrite` 用于常规应用增删改查，`migrator` 包含 DDL、DML 和建库能力，不添加 `GRANT OPTION`。
+- 用户确认沿用本需求与 `20260902-dsn-database-name`，修正 PostgreSQL grant/revoke：`--database` 与 `--schema` 可同时提供；无库名管理 DSN 通过 `--database` 选择连接库后再对 `--schema` 授权。用户要求在原 SpecFlow 体现该设计后继续 Implementation。
