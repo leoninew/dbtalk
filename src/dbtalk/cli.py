@@ -24,7 +24,10 @@ CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 @click.pass_context
 def cli(ctx: click.Context) -> None:
     """Run database backup, restore, transfer, query, and execution operations."""
-    settings = load_settings()
+    try:
+        settings = load_settings()
+    except ValueError as error:
+        raise click.ClickException(str(error)) from error
     configure_logging(
         settings.logging.level,
         settings.logging.format,
