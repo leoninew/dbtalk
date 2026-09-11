@@ -30,7 +30,7 @@ DBTALK_DSN_APP=postgresql+psycopg://backup:password@db.example.com:5432/app?sslm
 
 `dbtalk` 向 native client 传递无密码的 libpq URI；本机客户端读取临时 `.pgpass`，Docker client 通过子进程环境读取密码。正常输出、日志和错误摘要不会回显密码。`.env.local` 或其他 dotenv 变体不会被加载。
 
-PostgreSQL URL 的 database path 在语法上可省略。`schema list/create`、role 和权限查看可使用这种 DSN；`schema drop` 必须带有维护 database 以避免删除当前连接数据库。dump/restore 的目标按 `--database > DSN database > 失败` 决定；grant/revoke 未显式给出 `--database` 或 `--schema` 时仍需要 DSN database。
+PostgreSQL URL 的 database path 在语法上可省略。`schema list/create/drop`、role 和权限查看可使用这种 DSN。`schema drop` 以 `--name` 为删除目标，连接后检查当前会话数据库，不能删除当前正在连接的数据库。dump/restore 的目标按 `--database > DSN database > 失败` 决定；grant/revoke 未显式给出 `--database` 或 `--schema` 时仍需要 DSN database。
 
 对于 `localhost` 或 `127.0.0.1`，若请求端口唯一对应一个运行中的 Docker PostgreSQL 容器，dump 和 restore 优先复用该容器：通过 `docker exec` 调用容器内 `pg_dump` / `pg_restore`，使用容器默认 Unix socket；dump 的 archive 通过临时文件和 `docker cp` 取回，restore 通过 `docker cp` 放入后导入并清理。未识别到唯一映射容器时，才优先使用本机 `pg_dump` / `pg_restore`；本机客户端缺失时使用配置的 Docker image：
 
@@ -46,7 +46,7 @@ postgres:
 
 ## Schema management
 
-`schema` 子命令管理 PostgreSQL schema/database，不执行任意 SQL、不管理 role，也不替代 dump/restore。`list` 与 `create` 的管理 DSN 可以省略 database path；`drop` 必须连接到目标以外的维护 database，通常为 `postgres`。账号还需要相应的建库或删库权限。
+`schema` 子命令管理 PostgreSQL schema/database，不执行任意 SQL、不管理 role，也不替代 dump/restore。`list`、`create` 与 `drop` 的管理 DSN 都可以省略 database path。`drop` 以 `--name` 为删除目标，连接后读取当前会话数据库；若与 `--name` 相同则拒绝。账号还需要相应的建库或删库权限。
 
 ```dotenv
 DBTALK_DSN_POSTGRES_MANAGEMENT=postgresql+psycopg://operator:password@db.example.com:5432/postgres
@@ -58,7 +58,7 @@ uv run dbtalk postgres schema create --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT --
 uv run dbtalk postgres schema drop --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT --name app_db --yes
 ```
 
-`list` 输出非模板、可连接的数据库。`create` 使用服务端默认创建属性。`drop` 是不可逆操作，必须显式提供 `--yes`，且不能删除管理 DSN 正在连接的数据库。存在其他连接、权限不足或服务器策略限制时，命令会失败；首版不会主动终止其他会话。
+`list` 输出非模板、可连接的数据库。`create` 使用服务端默认创建属性。`drop` 是不可逆操作，必须显式提供 `--yes`，且不能删除当前会话正在连接的数据库。存在其他连接、权限不足或服务器策略限制时，命令会失败；首版不会主动终止其他会话。
 
 ## Dump
 

@@ -602,51 +602,107 @@ def test_mysql_rotate_password_all_hosts_fails_when_user_is_missing(
     rotate.assert_not_called()
 
 
-def test_mysql_rotate_password_requires_host_or_all_hosts_exclusively(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["mysql", "user", "password", "--password-env", "DBTALK_MYSQL_ROOT_PASSWORD"],
+        ["mysql", "user", "drop"],
+        ["mysql", "grant", "--profile", "readonly"],
+    ],
+)
+def test_mysql_account_commands_require_host_or_all_hosts_exclusively(
+    monkeypatch: pytest.MonkeyPatch, command: list[str]
 ) -> None:
     resolve_dsn = Mock()
     monkeypatch.setattr(mysql_user, "resolve_management_dsn", resolve_dsn)
+    runner = CliRunner()
+    common = ["--dsn-env", "MYSQL_ADMIN_DSN", "--user", "root", "--yes"]
 
-    missing = CliRunner().invoke(
-        cli,
-        [
-            "mysql",
-            "user",
-            "password",
-            "--dsn-env",
-            "MYSQL_ADMIN_DSN",
-            "--user",
-            "root",
-            "--password-env",
-            "DBTALK_MYSQL_ROOT_PASSWORD",
-            "--yes",
-        ],
-    )
-    both = CliRunner().invoke(
-        cli,
-        [
-            "mysql",
-            "user",
-            "password",
-            "--dsn-env",
-            "MYSQL_ADMIN_DSN",
-            "--user",
-            "root",
-            "--host",
-            "localhost",
-            "--all-hosts",
-            "--password-env",
-            "DBTALK_MYSQL_ROOT_PASSWORD",
-            "--yes",
-        ],
-    )
+    missing = runner.invoke(cli, [*command, *common])
+    both = runner.invoke(cli, [*command, *common, "--host", "localhost", "--all-hosts"])
 
     assert missing.exit_code != 0
     assert "provide --host or --all-hosts" in missing.output
     assert both.exit_code != 0
     assert "--host and --all-hosts are mutually exclusive" in both.output
     resolve_dsn.assert_not_called()
+
+
+def test_mysql_drop_all_hosts_drops_matching_accounts(monkeypatch: pytest.MonkeyPatch) -> None:
+    parsed = mysql_dsn()
+    drop = Mock()
+    monkeypatch.setattr(mysql_user, "resolve_management_dsn", lambda *_: parsed)
+    monkeypatch.setattr(
+        mysql_user,
+        "list_users",
+        lambda _: (
+            mysql_user.MysqlUserRecord("app", "api.example", False),
+            mysql_user.MysqlUserRecord("root", "%", False),
+            mysql_user.MysqlUserRecord("root", "localhost", False),
+        ),
+    )
+    monkeypatch.setattr(mysql_user, "drop_user", drop)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "mysql",
+            "user",
+            "drop",
+            "--dsn-env",
+            "MYSQL_ADMIN_DSN",
+            "--user",
+            "root",
+            "--all-hosts",
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert drop.call_args_list == [call(parsed, "root", "%"), call(parsed, "root", "localhost")]
+    assert "MySQL user dropped: root@%" in result.output
+    assert "MySQL user dropped: root@localhost" in result.output
+
+
+def test_mysql_grant_all_hosts_grants_matching_accounts(monkeypatch: pytest.MonkeyPatch) -> None:
+    parsed = mysql_dsn()
+    grant = Mock()
+    monkeypatch.setattr(mysql_user, "resolve_management_dsn", lambda *_: parsed)
+    monkeypatch.setattr(
+        mysql_user,
+        "list_users",
+        lambda _: (
+            mysql_user.MysqlUserRecord("app_user", "%", False),
+            mysql_user.MysqlUserRecord("app_user", "localhost", False),
+        ),
+    )
+    monkeypatch.setattr(mysql_user, "grant_profile", grant)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "mysql",
+            "grant",
+            "--dsn-env",
+            "MYSQL_ADMIN_DSN",
+            "--user",
+            "app_user",
+            "--all-hosts",
+            "--database",
+            "app",
+            "--profile",
+            "migrator",
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert grant.call_args_list == [
+        call(parsed, "app_user", "%", "app", "migrator"),
+        call(parsed, "app_user", "localhost", "app", "migrator"),
+    ]
+    assert "MySQL profile migrator granted on app to app_user@%" in result.output
+    assert "MySQL profile migrator granted on app to app_user@localhost" in result.output
 
 
 def test_mysql_grant_and_revoke_cli_dispatch_profile_operations(
@@ -861,7 +917,8 @@ def test_postgresql_errors_are_redacted_and_role_dsn_is_dialect_specific(
             ["mysql", "user", "password", "--help"],
             {"--all-hosts", "--host", "--password-env", "--yes"},
         ),
-        (["mysql", "grant", "--help"], {"--database", "--profile", "--yes"}),
+        (["mysql", "user", "drop", "--help"], {"--all-hosts", "--host", "--yes"}),
+        (["mysql", "grant", "--help"], {"--all-hosts", "--database", "--profile", "--yes"}),
         (["postgres", "grant", "--help"], {"--database", "--schema", "--profile"}),
     ],
 )

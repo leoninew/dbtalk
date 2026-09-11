@@ -115,21 +115,24 @@ def drop_database(parsed: ParsedDsn, name: str) -> None:
 
     _validate_management_dsn(parsed)
     _validate_database_name(name)
-    if parsed.database is None:
+    _run_management_operation(parsed, lambda connection: _drop_database(connection, name))
+
+
+def _drop_database(connection: Connection, name: str) -> None:
+    current = _connected_database_name(connection)
+    if current is not None and current == name:
         raise DatabaseOperationError(
-            "PostgreSQL database deletion requires a DSN connected to a maintenance database"
+            "PostgreSQL database deletion cannot target the currently connected database"
         )
-    if parsed.database == name:
-        raise DatabaseOperationError(
-            "PostgreSQL database deletion requires a DSN connected to a different "
-            "maintenance database"
-        )
-    _run_management_operation(
-        parsed,
-        lambda connection: connection.exec_driver_sql(
-            f"DROP DATABASE {_quote_database_name(connection, name)}"
-        ),
-    )
+    connection.exec_driver_sql(f"DROP DATABASE {_quote_database_name(connection, name)}")
+
+
+def _connected_database_name(connection: Connection) -> str | None:
+    value = connection.exec_driver_sql("SELECT current_database()").scalar()
+    if value is None:
+        return None
+    current = str(value).strip()
+    return current or None
 
 
 def _run_management_operation[Result](

@@ -56,7 +56,7 @@ uv run dbtalk mysql schema create --dsn-env DBTALK_DSN_MYSQL_MANAGEMENT --name a
 uv run dbtalk mysql schema drop --dsn-env DBTALK_DSN_MYSQL_MANAGEMENT --name app_db --yes
 ```
 
-`list` 输出可见数据库名。`create` 使用服务端默认创建属性。`drop` 是不可逆操作，必须显式提供 `--yes`；失败时命令只报告动作失败，不会输出 DSN 密码。MySQL 的名称、权限和 DDL 行为由服务器决定，执行前确认目标名称和连接账号。
+`list` 输出可见数据库名。`create` 使用服务端默认创建属性。`drop` 是不可逆操作，必须显式提供 `--yes`，以 `--name` 为删除目标，连接后读取当前会话数据库；若与 `--name` 相同则拒绝。失败时命令只报告动作失败，不会输出 DSN 密码。MySQL 的名称、权限和 DDL 行为由服务器决定，执行前确认目标名称和连接账号。
 
 ## Dump
 
@@ -138,7 +138,7 @@ uv run dbtalk mysql grant --dsn-env DBTALK_DSN_MYSQL_ADMIN \
   --privilege UPDATE --yes
 ```
 
-创建、启用、禁用和删除必须提供精确 `--host`：`localhost`、单个 DNS 名称、IPv4、IPv6，或字面量 `%`。`password` 使用 `--host` 或 `--all-hosts` 二者之一；`--all-hosts` 会按现有账号轮换该用户名下的每个 host，没有匹配账号时失败。密码只能通过 `--password-env` 引用；`DBTALK_*` 名称在进程变量不存在时读取当前目录 `.env`，进程变量存在但为空会失败且不回退。非 `DBTALK_*` 名称不读取 dotenv。密码不会显示在命令输出、日志或错误中。
+创建、启用和禁用必须提供精确 `--host`：`localhost`、单个 DNS 名称、IPv4、IPv6，或字面量 `%`。`password`、`user drop`、`grant` 和 `revoke` 使用 `--host` 或 `--all-hosts` 二者之一；`--all-hosts` 会按现有账号作用于该用户名下的每个 host，没有匹配账号时失败。密码只能通过 `--password-env` 引用；`DBTALK_*` 名称在进程变量不存在时读取当前目录 `.env`，进程变量存在但为空会失败且不回退。非 `DBTALK_*` 名称不读取 dotenv。密码不会显示在命令输出、日志或错误中。
 
 授权目标 database 可省略，省略时使用 DSN database。profile 按 `migrator > readwrite > readonly` 包含：`readonly` 授予 `SELECT, SHOW VIEW`；`readwrite` 再授予 `INSERT, UPDATE, DELETE`；`migrator` 再授予目标 database 上的 DDL，以及创建 database 所需的全局 `CREATE ON *.*`。MySQL 无法将建库的 `CREATE` 与对象 `CREATE` 分离为两种权限，因此 `migrator` 的建库能力是实例级能力；只应授予受控迁移账号。固定 profile 不包含 `GRANT`、`REVOKE`、`GRANT OPTION` 或其他权限管理能力。也可重复指定 `--privilege NAME` 使用数据库服务端支持的细粒度权限；它与 `--profile` 互斥。
 

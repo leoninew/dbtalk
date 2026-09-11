@@ -152,20 +152,10 @@ def rotate_password_command(
     """Rotate one MySQL account password, or every host of --user."""
 
     _require_yes(yes, "rotate a MySQL user password")
-    if host and all_hosts:
-        raise click.UsageError("--host and --all-hosts are mutually exclusive")
-    if not host and not all_hosts:
-        raise click.UsageError("provide --host or --all-hosts")
+    _require_host_selection(host, all_hosts)
     try:
         parsed = resolve_management_dsn(dsn_value, dsn_env)
-        if all_hosts:
-            hosts = tuple(record.host for record in list_users(parsed) if record.user == user_name)
-            if not hosts:
-                raise DatabaseOperationError(f"no MySQL accounts found for user {user_name}")
-        else:
-            assert host is not None
-            hosts = (host,)
-        for account_host in hosts:
+        for account_host in _selected_account_hosts(parsed, user_name, host, all_hosts=all_hosts):
             rotate_user_password(parsed, user_name, account_host, password_env)
             click.echo(f"MySQL user password rotated: {_display_account(user_name, account_host)}")
     except DatabaseOperationError as error:
@@ -176,30 +166,44 @@ def rotate_password_command(
 @click.option("--dsn", "dsn_value", help="Complete MySQL SQLAlchemy-style DSN.")
 @click.option("--dsn-env", help="Environment variable containing the MySQL DSN.")
 @click.option("--user", "user_name", required=True, help="MySQL account name.")
-@click.option("--host", required=True, help="Exact MySQL account host.")
+@click.option("--host", help="Exact MySQL account host.")
+@click.option(
+    "--all-hosts",
+    is_flag=True,
+    help="Delete every existing host of --user.",
+)
 @click.option("--yes", is_flag=True, help="Confirm deleting the account.")
 def drop_command(
     dsn_value: str | None,
     dsn_env: str | None,
     user_name: str,
-    host: str,
+    host: str | None,
+    all_hosts: bool,
     yes: bool,
 ) -> None:
-    """Delete one MySQL account."""
+    """Delete one MySQL account, or every host of --user."""
 
     _require_yes(yes, "drop a MySQL user")
+    _require_host_selection(host, all_hosts)
     try:
-        drop_user(resolve_management_dsn(dsn_value, dsn_env), user_name, host)
+        parsed = resolve_management_dsn(dsn_value, dsn_env)
+        for account_host in _selected_account_hosts(parsed, user_name, host, all_hosts=all_hosts):
+            drop_user(parsed, user_name, account_host)
+            click.echo(f"MySQL user dropped: {_display_account(user_name, account_host)}")
     except DatabaseOperationError as error:
         raise click.ClickException(str(error)) from error
-    click.echo(f"MySQL user dropped: {_display_account(user_name, host)}")
 
 
 @click.command("grant", cls=DbtalkCommand, context_settings=CONTEXT_SETTINGS)
 @click.option("--dsn", "dsn_value", help="Complete MySQL SQLAlchemy-style DSN.")
 @click.option("--dsn-env", help="Environment variable containing the MySQL DSN.")
 @click.option("--user", "user_name", required=True, help="MySQL account name.")
-@click.option("--host", required=True, help="Exact MySQL account host.")
+@click.option("--host", help="Exact MySQL account host.")
+@click.option(
+    "--all-hosts",
+    is_flag=True,
+    help="Grant to every existing host of --user.",
+)
 @click.option(
     "--database",
     "database_name",
@@ -224,7 +228,8 @@ def grant_command(
     dsn_value: str | None,
     dsn_env: str | None,
     user_name: str,
-    host: str,
+    host: str | None,
+    all_hosts: bool,
     database_name: str | None,
     profile: str | None,
     privileges: tuple[str, ...],
@@ -233,29 +238,38 @@ def grant_command(
     """Grant one MySQL profile or native privilege set."""
 
     _require_yes(yes, "grant MySQL privileges")
+    _require_host_selection(host, all_hosts)
     try:
         parsed = resolve_management_dsn(dsn_value, dsn_env)
         if profile is not None and privileges:
             raise DatabaseOperationError("--profile and --privilege are mutually exclusive")
         if profile is None and not privileges:
             raise DatabaseOperationError("provide --profile or at least one --privilege")
-        if profile is not None:
-            grant_profile(parsed, user_name, host, database_name, _profile(profile))
-        else:
-            grant_privileges(parsed, user_name, host, database_name, privileges)
+        target = database_name or parsed.database or "DSN database"
+        detail = (
+            f"profile {profile}" if profile is not None else f"privileges {', '.join(privileges)}"
+        )
+        for account_host in _selected_account_hosts(parsed, user_name, host, all_hosts=all_hosts):
+            if profile is not None:
+                grant_profile(parsed, user_name, account_host, database_name, _profile(profile))
+            else:
+                grant_privileges(parsed, user_name, account_host, database_name, privileges)
+            account = _display_account(user_name, account_host)
+            click.echo(f"MySQL {detail} granted on {target} to {account}")
     except DatabaseOperationError as error:
         raise click.ClickException(str(error)) from error
-    account = _display_account(user_name, host)
-    target = database_name or parsed.database or "DSN database"
-    detail = f"profile {profile}" if profile is not None else f"privileges {', '.join(privileges)}"
-    click.echo(f"MySQL {detail} granted on {target} to {account}")
 
 
 @click.command("revoke", cls=DbtalkCommand, context_settings=CONTEXT_SETTINGS)
 @click.option("--dsn", "dsn_value", help="Complete MySQL SQLAlchemy-style DSN.")
 @click.option("--dsn-env", help="Environment variable containing the MySQL DSN.")
 @click.option("--user", "user_name", required=True, help="MySQL account name.")
-@click.option("--host", required=True, help="Exact MySQL account host.")
+@click.option("--host", help="Exact MySQL account host.")
+@click.option(
+    "--all-hosts",
+    is_flag=True,
+    help="Revoke from every existing host of --user.",
+)
 @click.option(
     "--database",
     "database_name",
@@ -280,7 +294,8 @@ def revoke_command(
     dsn_value: str | None,
     dsn_env: str | None,
     user_name: str,
-    host: str,
+    host: str | None,
+    all_hosts: bool,
     database_name: str | None,
     profile: str | None,
     privileges: tuple[str, ...],
@@ -289,22 +304,26 @@ def revoke_command(
     """Revoke one MySQL profile or native privilege set."""
 
     _require_yes(yes, "revoke MySQL privileges")
+    _require_host_selection(host, all_hosts)
     try:
         parsed = resolve_management_dsn(dsn_value, dsn_env)
         if profile is not None and privileges:
             raise DatabaseOperationError("--profile and --privilege are mutually exclusive")
         if profile is None and not privileges:
             raise DatabaseOperationError("provide --profile or at least one --privilege")
-        if profile is not None:
-            revoke_profile(parsed, user_name, host, database_name, _profile(profile))
-        else:
-            revoke_privileges(parsed, user_name, host, database_name, privileges)
+        target = database_name or parsed.database or "DSN database"
+        detail = (
+            f"profile {profile}" if profile is not None else f"privileges {', '.join(privileges)}"
+        )
+        for account_host in _selected_account_hosts(parsed, user_name, host, all_hosts=all_hosts):
+            if profile is not None:
+                revoke_profile(parsed, user_name, account_host, database_name, _profile(profile))
+            else:
+                revoke_privileges(parsed, user_name, account_host, database_name, privileges)
+            account = _display_account(user_name, account_host)
+            click.echo(f"MySQL {detail} revoked on {target} from {account}")
     except DatabaseOperationError as error:
         raise click.ClickException(str(error)) from error
-    account = _display_account(user_name, host)
-    target = database_name or parsed.database or "DSN database"
-    detail = f"profile {profile}" if profile is not None else f"privileges {', '.join(privileges)}"
-    click.echo(f"MySQL {detail} revoked on {target} from {account}")
 
 
 def resolve_management_dsn(dsn: str | None, environment_name: str | None) -> ParsedDsn:
@@ -603,6 +622,25 @@ def _normalize_privilege(value: str) -> str:
 def _require_yes(yes: bool, action: str) -> None:
     if not yes:
         raise click.UsageError(f"--yes is required to {action}")
+
+
+def _require_host_selection(host: str | None, all_hosts: bool) -> None:
+    if host and all_hosts:
+        raise click.UsageError("--host and --all-hosts are mutually exclusive")
+    if not host and not all_hosts:
+        raise click.UsageError("provide --host or --all-hosts")
+
+
+def _selected_account_hosts(
+    parsed: ParsedDsn, user_name: str, host: str | None, *, all_hosts: bool
+) -> tuple[str, ...]:
+    if all_hosts:
+        hosts = tuple(record.host for record in list_users(parsed) if record.user == user_name)
+        if not hosts:
+            raise DatabaseOperationError(f"no MySQL accounts found for user {user_name}")
+        return hosts
+    assert host is not None
+    return (host,)
 
 
 def _display_account(user_name: str, host: str) -> str:

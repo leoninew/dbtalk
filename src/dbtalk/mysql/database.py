@@ -108,12 +108,24 @@ def drop_database(parsed: ParsedDsn, name: str) -> None:
 
     _validate_management_dsn(parsed)
     _validate_database_name(name)
-    _run_management_operation(
-        parsed,
-        lambda connection: connection.exec_driver_sql(
-            f"DROP DATABASE {_quote_database_name(connection, name)}"
-        ),
-    )
+    _run_management_operation(parsed, lambda connection: _drop_database(connection, name))
+
+
+def _drop_database(connection: Connection, name: str) -> None:
+    current = _connected_database_name(connection)
+    if current is not None and current == name:
+        raise DatabaseOperationError(
+            "MySQL database deletion cannot target the currently connected database"
+        )
+    connection.exec_driver_sql(f"DROP DATABASE {_quote_database_name(connection, name)}")
+
+
+def _connected_database_name(connection: Connection) -> str | None:
+    value = connection.exec_driver_sql("SELECT DATABASE()").scalar()
+    if value is None:
+        return None
+    current = str(value).strip()
+    return current or None
 
 
 def _run_management_operation[Result](
