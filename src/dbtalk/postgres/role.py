@@ -171,12 +171,15 @@ def drop_command(
 @click.option(
     "--database",
     "database_name",
-    help="PostgreSQL database authorization target. Defaults to the DSN database.",
+    help=(
+        "Database to authorize, or the database that contains --schema. "
+        "Defaults to the DSN database."
+    ),
 )
 @click.option(
     "--schema",
     "schema_name",
-    help="PostgreSQL schema authorization target. Defaults to the DSN database.",
+    help=("Schema to authorize. Combine with --database when the management DSN has no database."),
 )
 @click.option(
     "--profile",
@@ -208,7 +211,10 @@ def grant_command(
     _require_yes(yes, "grant PostgreSQL privileges")
     try:
         parsed = resolve_management_dsn(dsn_value, dsn_env)
-        resource = _resource(database_name, schema_name, parsed)
+        resource_type, resource_name, parsed = _authorization_target(
+            database_name, schema_name, parsed
+        )
+        resource = (resource_type, resource_name)
         if profile is not None and privileges:
             raise DatabaseOperationError("--profile and --privilege are mutually exclusive")
         if profile is None and not privileges:
@@ -221,7 +227,7 @@ def grant_command(
         raise click.ClickException(str(error)) from error
     click.echo(
         f"PostgreSQL {'profile ' + profile if profile else 'privileges ' + ', '.join(privileges)} "
-        f"granted on {resource[0]} {resource[1]} to {role_name}"
+        f"granted on {_describe_resource(resource_type, resource_name, parsed)} to {role_name}"
     )
 
 
@@ -232,12 +238,15 @@ def grant_command(
 @click.option(
     "--database",
     "database_name",
-    help="PostgreSQL database authorization target. Defaults to the DSN database.",
+    help=(
+        "Database to authorize, or the database that contains --schema. "
+        "Defaults to the DSN database."
+    ),
 )
 @click.option(
     "--schema",
     "schema_name",
-    help="PostgreSQL schema authorization target. Defaults to the DSN database.",
+    help=("Schema to authorize. Combine with --database when the management DSN has no database."),
 )
 @click.option(
     "--profile",
@@ -269,7 +278,10 @@ def revoke_command(
     _require_yes(yes, "revoke PostgreSQL privileges")
     try:
         parsed = resolve_management_dsn(dsn_value, dsn_env)
-        resource = _resource(database_name, schema_name, parsed)
+        resource_type, resource_name, parsed = _authorization_target(
+            database_name, schema_name, parsed
+        )
+        resource = (resource_type, resource_name)
         if profile is not None and privileges:
             raise DatabaseOperationError("--profile and --privilege are mutually exclusive")
         if profile is None and not privileges:
@@ -282,7 +294,7 @@ def revoke_command(
         raise click.ClickException(str(error)) from error
     click.echo(
         f"PostgreSQL {'profile ' + profile if profile else 'privileges ' + ', '.join(privileges)} "
-        f"revoked on {resource[0]} {resource[1]} from {role_name}"
+        f"revoked on {_describe_resource(resource_type, resource_name, parsed)} from {role_name}"
     )
 
 
@@ -549,20 +561,40 @@ def _validate_identifier(value: str, label: str) -> None:
         raise DatabaseOperationError(f"{label} is invalid")
 
 
-def _resource(
+def _authorization_target(
     database_name: str | None,
     schema_name: str | None,
     parsed: ParsedDsn,
-) -> tuple[str, str]:
-    if database_name is not None and schema_name is not None:
-        raise DatabaseOperationError("provide at most one of --database or --schema")
-    if database_name is None and schema_name is None:
-        if parsed.database is None:
-            raise DatabaseOperationError("database or schema resource is required")
-        return "database", parsed.database
-    return (
-        ("database", database_name) if database_name is not None else ("schema", schema_name or "")
+) -> tuple[str, str, ParsedDsn]:
+    if schema_name is not None:
+        connect_database = database_name or parsed.database
+        if connect_database is None:
+            raise DatabaseOperationError(
+                "schema authorization requires --database or a DSN database"
+            )
+        return "schema", schema_name, _with_database(parsed, connect_database)
+    if database_name is not None:
+        return "database", database_name, parsed
+    if parsed.database is None:
+        raise DatabaseOperationError("database or schema resource is required")
+    return "database", parsed.database, parsed
+
+
+def _with_database(parsed: ParsedDsn, database_name: str) -> ParsedDsn:
+    _validate_identifier(database_name, "PostgreSQL database name")
+    if parsed.database == database_name:
+        return parsed
+    return ParsedDsn(
+        url=parsed.url.set(database=database_name),
+        dialect=parsed.dialect,
+        async_mode=parsed.async_mode,
     )
+
+
+def _describe_resource(resource_type: str, resource_name: str, parsed: ParsedDsn) -> str:
+    if resource_type == "schema":
+        return f"schema {resource_name} in database {parsed.database}"
+    return f"{resource_type} {resource_name}"
 
 
 def _reject_current_role(connection: Connection, role_name: str) -> None:

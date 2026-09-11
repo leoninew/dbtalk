@@ -1,5 +1,5 @@
 # 放宽 DSN 数据库名称要求
-最后修改时间: 2026-09-02 10:05:42
+最后修改时间: 2026-09-11 13:38:24
 
 Review status: Accepted
 
@@ -46,7 +46,7 @@ Review status: Accepted
 | PostgreSQL 通用管理 | `postgres schema drop` | 是 | 必须将管理连接的 database 与删除目标比较，防止删除当前维护库。 |
 | PostgreSQL role 管理 | `postgres role list/create/enable/disable/rotate-password/drop` | 否 | 操作对象为 role，不读取 `parsed.database`。 |
 | PostgreSQL 权限查看 | `postgres permissions list/show` | 否 | 查询当前实际连接数据库中的原生权限。 |
-| PostgreSQL 授权 | `postgres grant` / `postgres revoke` | 条件必需 | 显式给出 `--database` 或 `--schema` 时不需要；两个资源参数都省略时以 DSN database 回退，因此必须提供。 |
+| PostgreSQL 授权 | `postgres grant` / `postgres revoke` | 条件必需 | 只传 `--database` 或两者都省略时，未给出 `--database` 则回退 DSN database。`--schema` 必须确定所在库：`--database` 或 DSN database。可同时提供 `--database` 与 `--schema`，此时连接到 `--database` 再对 `--schema` 授权。无库名 DSN 且未传 `--database` 时，仅 `--schema` 失败。 |
 | PostgreSQL 备份 | `postgres dump` | 条件必需 | 新增 `--database`；优先级为 `--database > DSN database > 失败`，native client 与自动输出名使用解析后的目标。 |
 | PostgreSQL 恢复 | `postgres restore` | 条件必需 | 新增 `--database`；优先级为 `--database > DSN database > 失败`，native client 使用解析后的目标。 |
 | SQLite | 所有 SQLite 命令 | 不适用 | SQLite DSN 必须提供数据库文件或内存资源路径；这不是服务端 database name。 |
@@ -90,6 +90,7 @@ Review status: Accepted
 - SQLite 的 `database` 字段表达资源路径，维持其非空约束。
 - 不在 dbtalk 内推导默认库；省略 URL database 后的连接选择由数据库驱动及其标准配置决定。
 - dump、restore 的目标库只由 `--database` 或 DSN database 给出，优先级固定为 `--database > DSN database > 失败`；运行时配置不得参与该决策。
+- PostgreSQL grant/revoke 的 `--database` 与 `--schema` 可同时提供。`--schema` 授权必须有明确连接库（`--database` 或 DSN database），不得依赖驱动默认库。
 - 本任务不改变配置 schema；后续独立任务再评估 dump/restore 配置的长期职责、保留项和删除项。无论配置最终形态如何，连接身份和 target database 不得恢复为配置回退来源。
 
 ## Open questions
@@ -99,5 +100,9 @@ Review status: Accepted
 ## Risk
 
 - 放宽解析后，所有依赖 `parsed.database` 的业务路径必须具备本地、语义化校验，避免把必要前置条件延后为模糊的驱动错误。
-- PostgreSQL 无库名连接使用驱动默认数据库；对 schema 级授权、权限列举与 transfer 的实际连接上下文需用集成测试确认。
+- PostgreSQL 无库名连接使用驱动默认数据库；schema 级 grant/revoke 不得使用该默认库，必须要求 `--database` 或 DSN database。权限列举与 transfer 的实际连接上下文仍需用集成测试确认。
 - 当前文档将 canonical DSN 都写成带 database name 的示例，实施时必须同步调整为可选段说明，避免新旧契约冲突。
+
+## User review notes
+
+- 用户确认沿用本需求，修正 PostgreSQL grant/revoke：无库名管理 DSN 通过同时提供 `--database` 与 `--schema` 选择连接库；仅 `--schema` 不得落到驱动默认库。用户要求在原 SpecFlow 体现该设计后继续 Implementation。

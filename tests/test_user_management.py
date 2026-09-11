@@ -365,8 +365,18 @@ def test_postgresql_migrator_profile_and_current_role_protection(
 
 
 def test_postgresql_resource_validation_and_list_fields(monkeypatch: pytest.MonkeyPatch) -> None:
-    with pytest.raises(DatabaseOperationError, match="at most one"):
-        postgres_role._resource("app", "public", postgresql_dsn())
+    parsed = parse_dsn("postgresql+psycopg://admin:secret@db.example")
+    with pytest.raises(DatabaseOperationError, match="schema authorization requires"):
+        postgres_role._authorization_target(None, "public", parsed)
+
+    resource_type, resource_name, connected = postgres_role._authorization_target(
+        "pomelo_orbit", "public", parsed
+    )
+    assert (resource_type, resource_name, connected.database) == (
+        "schema",
+        "public",
+        "pomelo_orbit",
+    )
 
     connection = FakeConnection(PostgreSQLDialect(), rows=[("app_role", True, False, False)])
     monkeypatch.setattr(postgres_role, "create_engine", lambda _: FakeEngine(connection))
@@ -860,6 +870,68 @@ def test_postgresql_grant_and_revoke_cli_dispatch_profile_operations(
     assert revoked.exit_code == 0, revoked.output
     grant.assert_called_once_with(parsed, "app_role", ("schema", "app"), "readonly")
     revoke.assert_called_once_with(parsed, "app_role", ("schema", "app"), "readonly")
+    assert "schema app in database app" in granted.output
+
+
+def test_postgresql_grant_cli_uses_database_to_select_schema_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parsed = parse_dsn("postgresql+psycopg://admin:secret@db.example")
+    grant = Mock()
+    monkeypatch.setattr(postgres_role, "resolve_management_dsn", lambda *_: parsed)
+    monkeypatch.setattr(postgres_role, "grant_profile", grant)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "postgres",
+            "grant",
+            "--dsn-env",
+            "POSTGRES_ADMIN_DSN",
+            "--role",
+            "orbit",
+            "--database",
+            "pomelo_orbit",
+            "--schema",
+            "public",
+            "--profile",
+            "migrator",
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    connected, role_name, resource, profile = grant.call_args[0]
+    assert connected.database == "pomelo_orbit"
+    assert (role_name, resource, profile) == ("orbit", ("schema", "public"), "migrator")
+    assert "schema public in database pomelo_orbit" in result.output
+
+
+def test_postgresql_grant_cli_rejects_schema_without_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parsed = parse_dsn("postgresql+psycopg://admin:secret@db.example")
+    monkeypatch.setattr(postgres_role, "resolve_management_dsn", lambda *_: parsed)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "postgres",
+            "grant",
+            "--dsn-env",
+            "POSTGRES_ADMIN_DSN",
+            "--role",
+            "orbit",
+            "--schema",
+            "public",
+            "--profile",
+            "migrator",
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "schema authorization requires --database or a DSN database" in result.output
 
 
 def test_postgresql_direct_lifecycle_operations_and_validation_branches(

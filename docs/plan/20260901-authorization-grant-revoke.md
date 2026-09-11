@@ -1,5 +1,5 @@
 # 授权与权限管理计划
-最后修改时间: 2026-09-01 22:41:50
+最后修改时间: 2026-09-11 13:38:24
 
 Review status: Accepted
 Flow mode: standard
@@ -12,7 +12,7 @@ Stage: Plan
 - 权限统一由 `grant` / `revoke` 处理，主体生命周期由 `user` / `role` 处理。
 - profile 固定为 `readonly`、`readwrite`、`migrator`，按 `migrator > readwrite > readonly` 包含；`migrator` 包含 DDL、DML 和建库能力，但不添加 `GRANT OPTION` 或角色管理能力。
 - 细粒度 `--privilege` 不由 dbtalk allowlist 预先限制，由数据库服务端校验；`--profile` 与 `--privilege` 互斥。
-- 授权/撤销必须提供明确 DSN 和目标主体；目标 schema/database 可省略，省略时使用当前 DSN 指向的资源。
+- 授权/撤销必须提供明确 DSN 和目标主体；目标 schema/database 可省略，省略时使用当前 DSN 指向的资源。PostgreSQL `--database` 与 `--schema` 可同时提供：`--database` 选择连接库，`--schema` 为 schema 授权目标。
 - 增加统一的 `permissions list/show`，直接展示 MySQL/PostgreSQL 原生权限查询结果。
 - MySQL 与 PostgreSQL 的 `database` 命令改为 `schema`，旧方言 `database` 命令移除；权限仍由 `grant/revoke` 管理。
 - 根级通用 `database` 命令组移除，其 `query`、`exec`、`export`、`import` 子命令提升为一级命令。
@@ -47,7 +47,7 @@ Stage: Plan
 --privilege NAME（可重复）
 ```
 
-资源参数可选；省略时使用当前 DSN 的 database/schema。PostgreSQL 保留 `--role` 以及可选的 `--database` / `--schema`；MySQL 保留 `--user`、`--host` 以及可选的 `--database`。
+资源参数可选；省略时使用当前 DSN 的 database/schema。PostgreSQL 保留 `--role` 以及 `--database` / `--schema`：只传 `--database` 时授权该库；只传 `--schema` 时使用 DSN database 作为连接库，DSN 无库名则失败；两者同时传入时连接到 `--database`，再对该库中的 `--schema` 授权。MySQL 保留 `--user`、`--host` 以及可选的 `--database`。
 
 细粒度 privilege 以单项结构化参数传入，由工具按方言安全引用主体和资源并生成原生授权语句；不接受完整 SQL、逗号分隔 privilege 字符串或 SQL 片段。数据库拒绝未知或无权 privilege 时，映射为不泄露凭据的稳定错误。
 
@@ -79,7 +79,7 @@ Profile 的撤销只撤销该 profile 映射的权限；不得因为撤销较小
 
 1. 扩展权限领域模型和 SQL 生成。
    - 为 MySQL 与 PostgreSQL 增加 profile 枚举、包含关系和 `--privilege` 重复参数解析。
-   - 允许资源缺省并从 DSN 推导当前 database/schema。
+   - 允许资源缺省并从 DSN 推导当前 database/schema。PostgreSQL schema 授权在无库名 DSN 上必须显式 `--database`，连接目标库后再执行 `GRANT/REVOKE ... ON SCHEMA`。
    - 生成 grant/revoke 原生语句，保留主体/资源安全引用和 `--yes` 前置确认。
    - 处理 profile 重叠、撤销范围及 PostgreSQL `CREATEDB` / MySQL 建库权限映射。
 
@@ -157,3 +157,4 @@ Profile 的撤销只撤销该 profile 映射的权限；不得因为撤销较小
 - Implementation 已完成代码、测试、文档和本地只读集成检查；尚未进入 Verification 阶段。
 - 用户明确要求完成 Specflow Verification；已完成验证并生成对应 verification 文档。
 - 用户最终将 profile 收敛为 `readonly`、`readwrite`、`migrator`，并明确 `migrator` 需要建库能力且不添加 `GRANT OPTION`。
+- 用户确认沿用本计划，修正 PostgreSQL grant/revoke 使 `--database` 与 `--schema` 可同时提供，并要求在原 SpecFlow 体现设计后继续 Implementation。
