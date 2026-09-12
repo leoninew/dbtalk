@@ -1,6 +1,8 @@
 # dbtalk
 
 [![CI](https://github.com/leoninew/pomelo-dbtalk/actions/workflows/ci.yml/badge.svg)](https://github.com/leoninew/pomelo-dbtalk/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/pomelo-dbtalk)](https://pypi.org/project/pomelo-dbtalk/)
+[![GitHub Release](https://img.shields.io/github/v/release/leoninew/pomelo-dbtalk)](https://github.com/leoninew/pomelo-dbtalk/releases)
 
 `dbtalk` is an LLM-ready database CLI for SQL operations, JSONL data transfer, permissions, and logical backups across SQLite, MySQL, and PostgreSQL.
 
@@ -22,6 +24,15 @@ Requires Python 3.12+. Install the published CLI with:
 ```bash
 uv tool install pomelo-dbtalk
 dbtalk --help
+```
+
+The package is published on [PyPI](https://pypi.org/project/pomelo-dbtalk/). Each version is also available from [GitHub Releases](https://github.com/leoninew/pomelo-dbtalk/releases) as a wheel and standalone binaries for Linux x86_64, macOS (Apple Silicon and Intel), and Windows x86_64.
+
+To use a standalone binary, download the matching asset from a release, make it executable on Linux or macOS, then run it directly:
+
+```bash
+chmod +x dbtalk-linux-x86_64
+./dbtalk-linux-x86_64 --help
 ```
 
 From a checkout, use [uv](https://docs.astral.sh/uv/):
