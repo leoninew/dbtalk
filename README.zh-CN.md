@@ -1,6 +1,8 @@
 # dbtalk
 
 [![CI](https://github.com/leoninew/pomelo-dbtalk/actions/workflows/ci.yml/badge.svg)](https://github.com/leoninew/pomelo-dbtalk/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/pomelo-dbtalk)](https://pypi.org/project/pomelo-dbtalk/)
+[![GitHub Release](https://img.shields.io/github/v/release/leoninew/pomelo-dbtalk)](https://github.com/leoninew/pomelo-dbtalk/releases)
 
 `dbtalk` 是一个面向大模型和 AI Agent 的数据库命令行工具，支持 SQLite、MySQL 和 PostgreSQL 的 SQL 操作、JSONL 数据传输、权限管理与逻辑备份。
 
@@ -22,6 +24,15 @@
 ```bash
 uv tool install pomelo-dbtalk
 dbtalk --help
+```
+
+该包已发布到 [PyPI](https://pypi.org/project/pomelo-dbtalk/)。每个版本也会在 [GitHub Releases](https://github.com/leoninew/pomelo-dbtalk/releases) 提供 wheel，以及 Linux x86_64、macOS（Apple Silicon 和 Intel）和 Windows x86_64 的独立可执行文件。
+
+使用独立可执行文件时，从 Release 下载对应平台的文件；在 Linux 或 macOS 上赋予执行权限后直接运行：
+
+```bash
+chmod +x dbtalk-linux-x86_64
+./dbtalk-linux-x86_64 --help
 ```
 
 从源码目录开发时使用 [uv](https://docs.astral.sh/uv/)：
