@@ -7,28 +7,55 @@ import argparse
 import logging
 import os
 import re
-import shlex
-import shutil
-import subprocess
 import sys
-import threading
+import tempfile
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import IO, Literal
+from typing import Literal
 from unicodedata import category
 
+import click
+import yaml  # type: ignore[import-untyped]
 from dynaconf import Dynaconf
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import ArgumentError
+
+from dbtalk.database.dsn import parse_dsn
+from dbtalk.database.models import DatabaseOperationError
+from dbtalk.database.operations import query_from_dsn
+from dbtalk.mysql.cli import mysql_connection_from_dsn
+from dbtalk.mysql.database import list_databases as list_mysql_databases
+from dbtalk.mysql.dump import (
+    MysqlDumpOverrides,
+)
+from dbtalk.mysql.dump import (
+    dump_database as dump_mysql_database,
+)
+from dbtalk.mysql.dump import (
+    resolve_dump_options as resolve_mysql_dump_options,
+)
+from dbtalk.postgres.cli import postgres_connection_from_dsn
+from dbtalk.postgres.database import list_databases as list_postgres_databases
+from dbtalk.postgres.dump import (
+    dump_database as dump_postgres_database,
+)
+from dbtalk.postgres.dump import (
+    resolve_dump_options as resolve_postgres_dump_options,
+)
+from dbtalk.settings import Settings, load_settings
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPOSITORY_ROOT = SCRIPT_DIR.parent
 DEFAULT_CONFIG_PATH = SCRIPT_DIR / "backup-db.yaml"
 ENV_PREFIX = "DBTALK"
 Engine = Literal["mysql", "postgres"]
+SYSTEM_DATABASES: dict[Engine, frozenset[str]] = {
+    "mysql": frozenset({"information_schema", "mysql", "performance_schema", "sys"}),
+    "postgres": frozenset({"postgres", "template0", "template1"}),
+}
 DSN_CREDENTIALS_PATTERN = re.compile(
     r"(?i)((?:mysql(?:\+pymysql)?|postgresql(?:\+psycopg)?):\/\/)[^@\s]+@"
 )
@@ -98,10 +125,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Dump the databases declared in a YAML configuration.",
         description="Sequentially dump the databases declared in a YAML configuration.",
     )
-    backup_parser.set_defaults(
-        config=DEFAULT_CONFIG_PATH,
-        dbtalk_command="dbtalk",
-    )
+    backup_parser.set_defaults(config=DEFAULT_CONFIG_PATH)
     backup_parser.add_argument(
         "-c",
         "--continue-on-error",
@@ -128,11 +152,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Backup YAML path (default: scripts/backup-db.yaml).",
     )
     test_parser.add_argument(
-        "--dbtalk-command",
-        default="dbtalk",
-        help="dbtalk executable or path (default: dbtalk).",
-    )
-    test_parser.add_argument(
         "--connect-timeout",
         dest="connect_timeout_seconds",
         type=positive_integer,
@@ -141,6 +160,21 @@ def build_parser() -> argparse.ArgumentParser:
             "Maximum database connection time for each connection test in seconds. "
             "Overrides target_validation.connection_timeout_seconds in the backup YAML."
         ),
+    )
+
+    sync_parser = subparsers.add_parser(
+        "sync",
+        help="Synchronize configured databases with visible non-system databases.",
+        description=(
+            "Add visible non-system databases as enabled and remove configured databases "
+            "that no longer exist."
+        ),
+    )
+    sync_parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG_PATH,
+        help="Backup YAML path (default: scripts/backup-db.yaml).",
     )
     return parser
 
@@ -196,72 +230,6 @@ def _target_dsn(url: URL, database: str) -> str:
 
 def _redact_credentials(text: str) -> str:
     return DSN_CREDENTIALS_PATTERN.sub(r"\1<redacted>@", text)
-
-
-def _subprocess_failure_detail(result: subprocess.CompletedProcess[str]) -> str:
-    detail = (result.stderr or "").strip() or (result.stdout or "").strip()
-    if not detail:
-        return ""
-    normalized = " ".join(detail.split())
-    return _redact_credentials(normalized)[:1000]
-
-
-def _pump_subprocess_stream(source: IO[str], destination: IO[str], chunks: list[str]) -> None:
-    for line in source:
-        chunks.append(line)
-        destination.write(_redact_credentials(line))
-        destination.flush()
-
-
-def run_streaming_command(
-    command: Sequence[str],
-    *,
-    cwd: Path,
-    env: Mapping[str, str],
-) -> subprocess.CompletedProcess[str]:
-    process = subprocess.Popen(
-        command,
-        cwd=cwd,
-        env=dict(env),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-    )
-    if process.stdout is None or process.stderr is None:
-        process.kill()
-        process.wait()
-        raise BackupError(f"dbtalk dump did not provide output streams: {command[0]}")
-
-    stdout_chunks: list[str] = []
-    stderr_chunks: list[str] = []
-    stdout_thread = threading.Thread(
-        target=_pump_subprocess_stream,
-        args=(process.stdout, sys.stdout, stdout_chunks),
-        name="backup-db-stdout",
-    )
-    stderr_thread = threading.Thread(
-        target=_pump_subprocess_stream,
-        args=(process.stderr, sys.stderr, stderr_chunks),
-        name="backup-db-stderr",
-    )
-    stdout_thread.start()
-    stderr_thread.start()
-    try:
-        returncode = process.wait()
-    except BaseException:
-        process.kill()
-        process.wait()
-        raise
-    finally:
-        stdout_thread.join()
-        stderr_thread.join()
-    return subprocess.CompletedProcess(
-        list(command),
-        returncode,
-        "".join(stdout_chunks),
-        "".join(stderr_chunks),
-    )
 
 
 def _parse_enabled(values: Mapping[str, object], context: str) -> bool:
@@ -406,18 +374,6 @@ def require_dsns(targets: Sequence[BackupTarget]) -> None:
             )
 
 
-def resolve_command(command: str) -> str:
-    resolved = shutil.which(command)
-    if resolved:
-        # Let subprocess resolve PATH commands so logs retain the configured name.
-        return command
-
-    command_path = Path(command)
-    if command_path.is_file():
-        return str(command_path.resolve())
-    raise BackupError(f"dbtalk executable was not found: {command}")
-
-
 def safe_component(value: str) -> str:
     component = "".join(
         character if character.isalnum() or character in "-_." else "-" for character in value
@@ -556,81 +512,241 @@ def write_manifest(
     return destination
 
 
-def run_dump(
-    dbtalk: str,
-    target: BackupTarget,
-    destination: Path,
-    environment: Mapping[str, str] | None = None,
-) -> None:
-    dsn_env = "DBTALK_DSN_BACKUP"
-    command = [
-        dbtalk,
-        target.engine,
-        "dump",
-        "--dsn-env",
-        dsn_env,
-        "--output",
-        str(destination),
-    ]
-    if target.engine == "mysql":
-        command.append("--archive")
-    for table in target.exclude_tables:
-        command.extend(["--exclude-table", table])
+def load_backup_settings() -> Settings:
+    try:
+        return load_settings(REPOSITORY_ROOT)
+    except ValueError as error:
+        raise BackupError("could not load dbtalk settings") from error
 
-    log_command = command.copy()
-    log_command[log_command.index("--output") + 1] = destination.name
-    logging.info("dbtalk command=%s", shlex.join(log_command))
-    child_environment = dict(environment) if environment is not None else os.environ.copy()
-    child_environment.setdefault("PYTHONUNBUFFERED", "1")
-    child_environment[dsn_env] = target.dsn
-    result = run_streaming_command(
-        command,
-        cwd=REPOSITORY_ROOT,
-        env=child_environment,
-    )
-    if result.returncode != 0:
-        detail = _subprocess_failure_detail(result)
-        diagnostic = f" diagnostic={detail}" if detail else ""
+
+def run_dump(settings: Settings, target: BackupTarget, destination: Path) -> None:
+    try:
+        if target.engine == "mysql":
+            host, port, user, password, dsn_database = mysql_connection_from_dsn(target.dsn, None)
+            mysql_options = resolve_mysql_dump_options(
+                settings.mysql,
+                MysqlDumpOverrides(
+                    host=host,
+                    port=port,
+                    user=user,
+                    password=password,
+                    target_database=target.database,
+                    dsn_database=dsn_database,
+                    output=destination,
+                    archive=True,
+                    exclude_tables=target.exclude_tables,
+                ),
+            )
+            completed_output = dump_mysql_database(mysql_options)
+        else:
+            connection = postgres_connection_from_dsn(
+                target.dsn,
+                None,
+                target_database=target.database,
+            )
+            postgres_options = resolve_postgres_dump_options(
+                settings.postgres,
+                connection,
+                destination,
+                None,
+                target.exclude_tables,
+            )
+            completed_output = dump_postgres_database(postgres_options)
+    except click.ClickException as error:
+        diagnostic = _redact_credentials(str(error))[:1000]
         raise BackupError(
             "dbtalk dump failed "
             f"engine={target.engine} connection={target.connection} "
-            f"database={target.database} exit_code={result.returncode}{diagnostic}"
-        )
-    if not destination.is_file() or destination.stat().st_size <= 0:
+            f"database={target.database} diagnostic={diagnostic}"
+        ) from error
+    if not completed_output.is_file() or completed_output.stat().st_size <= 0:
         raise BackupError(f"dbtalk dump produced no usable file: {destination.name}")
 
 
 def run_connection_test(
-    dbtalk: str,
+    settings: Settings,
     dsn: str,
     connection_timeout_seconds: int,
-    environment: Mapping[str, str] | None = None,
 ) -> bool:
-    dsn_env = "DBTALK_DSN_BACKUP"
-    command = [
-        dbtalk,
-        "query",
-        "--dsn-env",
-        dsn_env,
-        "--sql",
-        "SELECT 1",
-        "--connect-timeout",
-        str(connection_timeout_seconds),
-        "--format",
-        "json",
-    ]
-    logging.info("dbtalk command=%s", shlex.join(command))
-    child_environment = dict(environment) if environment is not None else os.environ.copy()
-    child_environment[dsn_env] = dsn
-    result = subprocess.run(
-        command,
-        cwd=REPOSITORY_ROOT,
-        env=child_environment,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return result.returncode == 0
+    try:
+        query_from_dsn(
+            dsn,
+            None,
+            "SELECT 1",
+            timeout_seconds=settings.database.query_timeout_seconds,
+            connect_timeout_seconds=connection_timeout_seconds,
+        )
+    except DatabaseOperationError:
+        return False
+    return True
+
+
+def _management_dsn(dsn: str, engine: Engine) -> str:
+    database = "mysql" if engine == "mysql" else "postgres"
+    return make_url(dsn).set(database=database).render_as_string(hide_password=False)
+
+
+def _validate_database_names(names: Sequence[str], connection_name: str) -> tuple[str, ...]:
+    databases: list[str] = []
+    for index, database in enumerate(names, 1):
+        if (
+            not isinstance(database, str)
+            or not database
+            or database != database.strip()
+            or any(
+                character == "\x00" or category(character).startswith("C") for character in database
+            )
+        ):
+            raise BackupError(
+                "dbtalk catalog list returned an invalid database name "
+                f"for connection={connection_name} index={index}"
+            )
+        databases.append(database)
+    if len(databases) != len(set(databases)):
+        raise BackupError(
+            f"dbtalk catalog list returned duplicate names for connection={connection_name}"
+        )
+    return tuple(databases)
+
+
+def list_connection_databases(
+    connection: BackupConnection,
+    engine: Engine,
+) -> tuple[str, ...]:
+    try:
+        parsed = parse_dsn(_management_dsn(connection.dsn, engine))
+        databases = (
+            list_mysql_databases(parsed) if engine == "mysql" else list_postgres_databases(parsed)
+        )
+    except DatabaseOperationError as error:
+        raise BackupError(
+            f"dbtalk catalog list failed engine={engine} connection={connection.name}"
+        ) from error
+    return _validate_database_names(databases, connection.name)
+
+
+def _raw_backup_config(config_path: Path) -> dict[str, object]:
+    try:
+        loaded = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as error:
+        raise BackupError(f"could not load backup config: {config_path}") from error
+    return _mapping(loaded, "config")
+
+
+def _mutable_mapping(value: object, context: str) -> dict[str, object]:
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+        raise BackupError(f"{context} must be a YAML mapping with string keys")
+    return value
+
+
+def _sync_databases(
+    configured: list[object],
+    discovered: Sequence[str],
+    engine: Engine,
+    context: str,
+) -> tuple[list[dict[str, object]], tuple[str, ...], tuple[str, ...]]:
+    system_databases = SYSTEM_DATABASES[engine]
+    available = {database for database in discovered if database.casefold() not in system_databases}
+    retained: list[dict[str, object]] = []
+    retained_names: set[str] = set()
+    removed: list[str] = []
+    for index, raw_database in enumerate(configured, 1):
+        database_context = f"{context}[{index}]"
+        database_config = _mutable_mapping(raw_database, database_context)
+        database = _required_string(database_config, "name", database_context)
+        if database not in available or database in retained_names:
+            removed.append(database)
+            continue
+        retained.append(database_config)
+        retained_names.add(database)
+
+    added = tuple(sorted(available - retained_names, key=str.casefold))
+    retained.extend({"name": database, "enabled": True} for database in added)
+    return retained, added, tuple(removed)
+
+
+def _write_backup_config(config_path: Path, config: Mapping[str, object]) -> None:
+    try:
+        rendered = yaml.safe_dump(dict(config), allow_unicode=False, sort_keys=False)
+    except yaml.YAMLError as error:
+        raise BackupError(f"could not render backup config: {config_path}") from error
+
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            dir=config_path.parent,
+            prefix=f".{config_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary.write(rendered)
+            temporary_path = Path(temporary.name)
+        os.replace(temporary_path, config_path)
+    except OSError as error:
+        raise BackupError(f"could not write backup config: {config_path}") from error
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+def run_sync(args: argparse.Namespace) -> int:
+    config_path = args.config.expanduser().resolve()
+    backup_config = load_backup_config(config_path)
+    raw_config = _raw_backup_config(config_path)
+    raw_connections = _list(raw_config.get("connections"), "config.connections")
+    if len(raw_connections) != len(backup_config.connections):
+        raise BackupError("config.connections changed while loading the backup config")
+
+    engines_by_connection = {
+        target.connection_name: target.engine for target in backup_config.targets
+    }
+    changed = False
+    for index, (connection, raw_connection) in enumerate(
+        zip(backup_config.connections, raw_connections, strict=True), 1
+    ):
+        engine = engines_by_connection.get(connection.name)
+        if engine is None:
+            raise BackupError(f"no database engine found for connection={connection.name}")
+        connection_context = f"config.connections[{index}]"
+        connection_config = _mutable_mapping(raw_connection, connection_context)
+        if _required_string(connection_config, "name", connection_context) != connection.name:
+            raise BackupError("config.connections changed while loading the backup config")
+        logging.info(
+            "sync catalog list started index=%d/%d engine=%s connection=%s",
+            index,
+            len(backup_config.connections),
+            engine,
+            connection.name,
+        )
+        discovered = list_connection_databases(connection, engine)
+        raw_databases = _list(connection_config.get("databases"), f"{connection_context}.databases")
+        synchronized, added, removed = _sync_databases(
+            raw_databases,
+            discovered,
+            engine,
+            f"{connection_context}.databases",
+        )
+        if synchronized == raw_databases:
+            logging.info("sync unchanged connection=%s", connection.name)
+            continue
+        connection_config["databases"] = synchronized
+        changed = True
+        logging.info(
+            "sync planned connection=%s added=%s removed=%s",
+            connection.name,
+            ",".join(added) or "-",
+            ",".join(removed) or "-",
+        )
+
+    if not changed:
+        logging.info("sync completed: no changes")
+        return 0
+    _write_backup_config(config_path, raw_config)
+    logging.info("sync completed: config=%s", config_path)
+    return 0
 
 
 def run_backups(args: argparse.Namespace) -> int:
@@ -654,11 +770,10 @@ def run_backups(args: argparse.Namespace) -> int:
         batch_timestamp,
     )
 
-    dbtalk = None
     enabled_targets = tuple(target for target in backup_config.targets if target.enabled)
     if not args.continue_on_error:
         require_dsns(enabled_targets)
-    dbtalk = resolve_command(args.dbtalk_command)
+    settings = load_backup_settings() if enabled_targets else None
     batch_output_directory.mkdir(parents=True, exist_ok=True)
 
     results: list[BackupArtifact | BackupFailure] = []
@@ -723,12 +838,12 @@ def run_backups(args: argparse.Namespace) -> int:
             target.engine,
             target.database,
         )
-        assert dbtalk is not None
+        assert settings is not None
         try:
             if args.continue_on_error:
                 require_dsns((target,))
             started_at = time.perf_counter()
-            run_dump(dbtalk, target, destination)
+            run_dump(settings, target, destination)
             duration_seconds = time.perf_counter() - started_at
         except (BackupError, OSError) as exc:
             if not args.continue_on_error:
@@ -781,7 +896,7 @@ def run_backups(args: argparse.Namespace) -> int:
 
 def run_tests(args: argparse.Namespace) -> int:
     backup_config = load_backup_config(args.config)
-    dbtalk = resolve_command(args.dbtalk_command)
+    settings = load_backup_settings()
     connection_timeout_seconds = (
         args.connect_timeout_seconds
         if args.connect_timeout_seconds is not None
@@ -803,7 +918,7 @@ def run_tests(args: argparse.Namespace) -> int:
             connection.name,
         )
         started_at = time.perf_counter()
-        succeeded = run_connection_test(dbtalk, connection.dsn, connection_timeout_seconds)
+        succeeded = run_connection_test(settings, connection.dsn, connection_timeout_seconds)
         duration_seconds = time.perf_counter() - started_at
         if succeeded:
             passed += 1
@@ -842,6 +957,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return run_backups(args)
         if args.command == "test":
             return run_tests(args)
+        if args.command == "sync":
+            return run_sync(args)
         raise BackupError(f"unsupported command: {args.command}")
     except BackupError:
         logging.exception("%s run failed", args.command)
