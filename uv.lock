@@ -557,7 +557,7 @@ wheels = [
 
 [[package]]
 name = "pomelo-dbtalk"
-version = "0.25.1"
+version = "0.28.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },

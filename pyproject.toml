@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "pomelo-dbtalk"
-version = "0.25.1"
+version = "0.28.0"
 description = "MySQL and PostgreSQL backup/restore plus JSONL database transfer CLI."
 readme = "README.md"
 license = { file = "LICENSE" }
