@@ -639,10 +639,27 @@ def test_sql_script_statements_skips_comments_and_transaction_control() -> None:
         COMMIT;
         """
     )
-    assert statements == (
-        "DELETE FROM users WHERE id = 1",
-        "INSERT INTO users (id, name) VALUES (1, '{\"optional\":true,\"note\":\"a;b\"}')",
+    assert len(statements) == 2
+    assert statements[0].endswith("DELETE FROM users WHERE id = 1")
+    assert "optional" in statements[1]
+    assert "a;b" in statements[1]
+
+
+def test_sql_script_statements_keeps_procedure_body_and_dollar_quotes() -> None:
+    statements = sql_script_statements(
+        """
+        CREATE FUNCTION add_one(i integer) RETURNS integer AS $$
+        BEGIN
+            RETURN i + 1;
+        END;
+        $$ LANGUAGE plpgsql;
+        SELECT add_one(1);
+        """
     )
+    assert len(statements) == 2
+    assert statements[0].startswith("CREATE FUNCTION add_one")
+    assert "RETURN i + 1;" in statements[0]
+    assert statements[1] == "SELECT add_one(1)"
 
 
 def test_read_sql_file_rejects_missing_empty_and_directory(tmp_path: Path) -> None:

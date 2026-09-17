@@ -11,6 +11,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import sqlparse
+from sqlparse import tokens as sql_tokens
 from tabulate import tabulate
 
 from .connection import DatabaseClient
@@ -130,65 +132,14 @@ def read_sql_file(path: Path) -> str:
 
 def sql_script_statements(script: str) -> tuple[str, ...]:
     statements: list[str] = []
-    current: list[str] = []
-    index = 0
-    length = len(script)
-    in_single = False
-    in_double = False
-    in_backtick = False
-    while index < length:
-        char = script[index]
-        nxt = script[index + 1] if index + 1 < length else ""
-        if not in_single and not in_double and not in_backtick:
-            if char == "-" and nxt == "-":
-                index = _skip_line_comment(script, index)
-                continue
-            if char == "#":
-                index = _skip_line_comment(script, index)
-                continue
-            if char == "/" and nxt == "*":
-                index = _skip_block_comment(script, index)
-                continue
-            if char == ";":
-                _append_script_statement(statements, "".join(current))
-                current = []
-                index += 1
-                continue
-            if char == "'":
-                in_single = True
-            elif char == '"':
-                in_double = True
-            elif char == "`":
-                in_backtick = True
-            current.append(char)
-            index += 1
+    for raw in sqlparse.split(script, strip_semicolon=True):
+        statement = raw.strip()
+        if not statement:
             continue
-        if char == "\\" and nxt:
-            current.append(char)
-            current.append(nxt)
-            index += 2
+        significant = _significant_sql(statement)
+        if not significant or _TRANSACTION_CONTROL.fullmatch(significant) is not None:
             continue
-        current.append(char)
-        if in_single and char == "'":
-            if nxt == "'":
-                current.append(nxt)
-                index += 2
-                continue
-            in_single = False
-        elif in_double and char == '"':
-            if nxt == '"':
-                current.append(nxt)
-                index += 2
-                continue
-            in_double = False
-        elif in_backtick and char == "`":
-            if nxt == "`":
-                current.append(nxt)
-                index += 2
-                continue
-            in_backtick = False
-        index += 1
-    _append_script_statement(statements, "".join(current))
+        statements.append(statement)
     return tuple(statements)
 
 
@@ -212,23 +163,13 @@ def execute_sql_file_from_dsn(
         return client.execute_script(statements)
 
 
-def _skip_line_comment(script: str, index: int) -> int:
-    while index < len(script) and script[index] not in "\n\r":
-        index += 1
-    return index
-
-
-def _skip_block_comment(script: str, index: int) -> int:
-    index += 2
-    while index < len(script) - 1 and not (script[index] == "*" and script[index + 1] == "/"):
-        index += 1
-    return index + 2 if index < len(script) - 1 else len(script)
-
-
-def _append_script_statement(statements: list[str], raw: str) -> None:
-    statement = raw.strip().rstrip(";").strip()
-    if statement and _TRANSACTION_CONTROL.fullmatch(statement) is None:
-        statements.append(statement)
+def _significant_sql(statement: str) -> str:
+    parts: list[str] = []
+    for ttype, value in sqlparse.lexer.tokenize(statement):
+        if ttype in sql_tokens.Comment or ttype in (sql_tokens.Whitespace, sql_tokens.Newline):
+            continue
+        parts.append(value)
+    return " ".join(parts).strip().rstrip(";").strip()
 
 
 def _resolve_operation_dsn(dsn: str | None, environment_name: str | None) -> ParsedDsn:
