@@ -58,6 +58,10 @@ uv run dbtalk query \
 uv run dbtalk exec \
   --dsn-env DBTALK_DSN_APP \
   --sql 'CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)'
+
+uv run dbtalk exec \
+  --dsn-env DBTALK_DSN_APP \
+  --file ./data/notes.sql
 ```
 
 `query` is read-only; `exec` runs a write-capable session. Add `-v` on a leaf command to see sanitized exception details.
@@ -78,7 +82,7 @@ Agents write the DSN to `.env` before the first database command. `--dsn-env DBT
 | `dbtalk postgres permissions list/show` | Inspect native PostgreSQL permissions |
 | `dbtalk mysql dump/restore` | Create or restore MySQL SQL dumps |
 | `dbtalk postgres dump/restore` | Create or restore PostgreSQL custom archives |
-| `dbtalk query/exec` | Query or execute one SQL statement |
+| `dbtalk query/exec` | Query or execute SQL; `exec --file` runs a UTF-8 SQL script |
 | `dbtalk export/import` | Transfer JSONL data |
 
 Run `uv run dbtalk --help` or a subcommand's `--help` for full options.

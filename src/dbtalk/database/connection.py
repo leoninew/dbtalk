@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator, Mapping
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass
 from math import ceil
@@ -67,6 +67,16 @@ class DatabaseSession:
                 raise DatabaseOperationError("database execution timed out") from error
             raise DatabaseOperationError("database execution failed") from error
         return ExecutionResult(row_count=max(result.rowcount, 0))
+
+    def execute_literal(self, statement: str) -> ExecutionResult:
+        try:
+            result = self._connection.exec_driver_sql(statement)
+        except SQLAlchemyError as error:
+            if self._deadline is not None and self._deadline.expired:
+                raise DatabaseOperationError("database execution timed out") from error
+            raise DatabaseOperationError("database execution failed") from error
+        rowcount = result.rowcount
+        return ExecutionResult(row_count=0 if rowcount is None or rowcount < 0 else rowcount)
 
 
 class DatabaseClient:
@@ -134,6 +144,15 @@ class DatabaseClient:
         session_context = self._query_session() if read_only else self._execution_session()
         with session_context as session:
             return session.execute(statement, parameters)
+
+    def execute_script(self, statements: Sequence[str]) -> ExecutionResult:
+        if not statements:
+            raise DatabaseOperationError("SQL file contains no executable statements")
+        with self._execution_session() as session:
+            total = 0
+            for statement in statements:
+                total += session.execute_literal(statement).row_count
+            return ExecutionResult(row_count=total)
 
     def close(self) -> None:
         self._engine.dispose()
