@@ -701,6 +701,58 @@ def test_exec_file_runs_literal_script_in_one_transaction(tmp_path: Path) -> Non
     assert json.loads(query.output)["rows"] == [{"name": '{"optional":true}'}]
 
 
+def test_exec_dry_run_prints_sql_without_executing(tmp_path: Path) -> None:
+    path = tmp_path / "dry-run.db"
+    create_database(path)
+    dsn = f"sqlite:///{path.as_posix()}"
+    runner = CliRunner()
+    script = tmp_path / "update.sql"
+    script.write_text(
+        "UPDATE users SET name = 'Grace' WHERE id = 1;\n"
+        "UPDATE users SET active = 0 WHERE id = 1;\n",
+        encoding="utf-8",
+    )
+
+    file_preview = runner.invoke(
+        cli, ["exec", "--dsn", dsn, "--file", str(script), "--dry-run"]
+    )
+    assert file_preview.exit_code == 0, file_preview.output
+    assert "UPDATE users SET name = 'Grace' WHERE id = 1;" in file_preview.output
+    assert "UPDATE users SET active = 0 WHERE id = 1;" in file_preview.output
+    assert "SQL dry-run completed (2 statements)" in file_preview.output
+    assert "rows affected" not in file_preview.output
+
+    sql_preview = runner.invoke(
+        cli,
+        [
+            "exec",
+            "--dsn",
+            dsn,
+            "--sql",
+            "UPDATE users SET name = 'Grace' WHERE id = 1",
+            "--dry-run",
+        ],
+    )
+    assert sql_preview.exit_code == 0, sql_preview.output
+    assert "UPDATE users SET name = 'Grace' WHERE id = 1;" in sql_preview.output
+    assert "SQL dry-run completed (1 statements)" in sql_preview.output
+
+    query = runner.invoke(
+        cli,
+        [
+            "query",
+            "--dsn",
+            dsn,
+            "--sql",
+            "SELECT name, active FROM users WHERE id = 1",
+            "--format",
+            "json",
+        ],
+    )
+    assert query.exit_code == 0, query.output
+    assert json.loads(query.output)["rows"] == [{"name": "Ada", "active": 1}]
+
+
 def test_exec_file_rolls_back_when_a_later_statement_fails(tmp_path: Path) -> None:
     path = tmp_path / "rollback.db"
     create_database(path)

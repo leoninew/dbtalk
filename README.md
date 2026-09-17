@@ -62,6 +62,11 @@ uv run dbtalk exec \
 uv run dbtalk exec \
   --dsn-env DBTALK_DSN_APP \
   --file ./data/notes.sql
+
+uv run dbtalk exec \
+  --dsn-env DBTALK_DSN_APP \
+  --file ./data/notes.sql \
+  --dry-run
 ```
 
 `query` is read-only; `exec` runs a write-capable session. Add `-v` on a leaf command to see sanitized exception details.

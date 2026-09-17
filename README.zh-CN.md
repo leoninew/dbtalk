@@ -62,6 +62,11 @@ uv run dbtalk exec \
 uv run dbtalk exec \
   --dsn-env DBTALK_DSN_APP \
   --file ./data/notes.sql
+
+uv run dbtalk exec \
+  --dsn-env DBTALK_DSN_APP \
+  --file ./data/notes.sql \
+  --dry-run
 ```
 
 `query` 使用只读会话，`exec` 使用写会话。叶子命令可加 `-v` 查看清洗后的异常细节。

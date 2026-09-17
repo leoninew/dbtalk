@@ -58,9 +58,14 @@ uv run dbtalk exec \
 uv run dbtalk exec \
   --dsn-env DBTALK_DSN_APP \
   --file ./data/update.sql
+
+uv run dbtalk exec \
+  --dsn-env DBTALK_DSN_APP \
+  --file ./data/update.sql \
+  --dry-run
 ```
 
-`query` 默认输出 `table`，也可使用 `--format json`。JSON 输出包含 `columns`、`rows` 和 `row_count`；日期时间、Decimal 和 BLOB 会转换为 JSON-safe 值。`query` 会开启数据库的只读会话；它不分析 SQL 文本，因此写入、DDL 或其他被数据库认定为写入的语句会由数据库拒绝。`exec` 使用写会话执行 SQL，并输出影响行数；它不识别 DML，实际能否写入由数据库授权决定。只读查询必须走 `query`。`--sql` 执行一条带命名绑定的 SQL；`--file` 读取 UTF-8 脚本，按字面量在同一写事务中执行其中的语句，忽略脚本里的 `START TRANSACTION` / `COMMIT` / `BEGIN` / `ROLLBACK`，且不能与 `--sql` 或 `--param` 同时使用。叶子命令接受 `-v/--verbose`：失败时在阶段错误后追加清洗后的异常细节（异常类型与消息，不含 traceback、SQL 文本或绑定参数），并把该次调用的日志升到 DEBUG。根命令和中间 group 不提供 `-v`。
+`query` 默认输出 `table`，也可使用 `--format json`。JSON 输出包含 `columns`、`rows` 和 `row_count`；日期时间、Decimal 和 BLOB 会转换为 JSON-safe 值。`query` 会开启数据库的只读会话；它不分析 SQL 文本，因此写入、DDL 或其他被数据库认定为写入的语句会由数据库拒绝。`exec` 使用写会话执行 SQL，并输出影响行数；它不识别 DML，实际能否写入由数据库授权决定。只读查询必须走 `query`。`--sql` 执行一条带命名绑定的 SQL；`--file` 读取 UTF-8 脚本，按字面量在同一写事务中执行其中的语句，忽略脚本里的 `START TRANSACTION` / `COMMIT` / `BEGIN` / `ROLLBACK`，且不能与 `--sql` 或 `--param` 同时使用。`--dry-run` 只打印将要执行的每条 SQL，不连接数据库、不写入。叶子命令接受 `-v/--verbose`：失败时在阶段错误后追加清洗后的异常细节（异常类型与消息，不含 traceback、SQL 文本或绑定参数），并把该次调用的日志升到 DEBUG。根命令和中间 group 不提供 `-v`。
 
 超时使用数据库或驱动的原生能力：SQLite 使用 progress handler 和 `busy_timeout`，PostgreSQL 使用事务本地 `statement_timeout`，MySQL 使用 `max_execution_time`，并配置 PyMySQL 读写 socket 超时。MySQL 对超时的写语句会中断当前连接；事务型表会由数据库回滚未提交事务，但非事务性语句和带隐式提交的 DDL 仍遵循 MySQL 原生语义，不能承诺完整回滚。
 

@@ -102,6 +102,7 @@ def test_verbose_option_is_on_leaf_commands_not_groups() -> None:
     assert exec_help.exit_code == 0, exec_help.output
     assert "-v, --verbose" in exec_help.output
     assert "--file" in exec_help.output
+    assert "--dry-run" in exec_help.output
     assert "--write" not in exec_help.output
     assert dump_help.exit_code == 0, dump_help.output
     assert "-v, --verbose" in dump_help.output

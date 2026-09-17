@@ -20,7 +20,9 @@ from .operations import (
     execute_sql_file_from_dsn,
     parse_parameters,
     query_from_dsn,
+    read_sql_file,
     render_query,
+    sql_script_statements,
 )
 from .transfer import (
     DatabaseDriver,
@@ -484,6 +486,11 @@ def query_command(
     multiple=True,
     help="Bind parameter in NAME=JSON_VALUE form. Repeat for multiple parameters.",
 )
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Print each SQL statement without executing.",
+)
 @click.pass_context
 def exec_command(
     ctx: click.Context,
@@ -494,6 +501,7 @@ def exec_command(
     timeout_seconds: int | None,
     connect_timeout_seconds: int | None,
     parameters: tuple[str, ...],
+    dry_run: bool,
 ) -> None:
     """Execute one parameterized SQL statement or a SQL script file against a DSN."""
 
@@ -502,6 +510,9 @@ def exec_command(
         if (sql is None) == (sql_file is None):
             raise DatabaseOperationError("provide exactly one of --sql or --file")
         if sql is not None:
+            if dry_run:
+                _echo_dry_run_statements((sql,))
+                return
             result = execute_from_dsn(
                 dsn_value,
                 dsn_env,
@@ -515,6 +526,12 @@ def exec_command(
                 raise DatabaseOperationError("provide exactly one of --sql or --file")
             if parameters:
                 raise DatabaseOperationError("--param cannot be used with --file")
+            statements = sql_script_statements(read_sql_file(sql_file))
+            if not statements:
+                raise DatabaseOperationError("SQL file contains no executable statements")
+            if dry_run:
+                _echo_dry_run_statements(statements)
+                return
             result = execute_sql_file_from_dsn(
                 dsn_value,
                 dsn_env,
@@ -527,3 +544,11 @@ def exec_command(
     except RuntimeError as error:
         raise click.ClickException(str(error)) from error
     click.echo(f"SQL execution completed ({result.row_count} rows affected)")
+
+
+def _echo_dry_run_statements(statements: tuple[str, ...]) -> None:
+    for statement in statements:
+        rendered = statement if statement.endswith(";") else f"{statement};"
+        click.echo(rendered)
+        click.echo()
+    click.echo(f"SQL dry-run completed ({len(statements)} statements)")
