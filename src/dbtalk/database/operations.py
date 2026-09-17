@@ -5,11 +5,11 @@ from __future__ import annotations
 import base64
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
 from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import sqlparse
 from sqlparse import tokens as sql_tokens
@@ -165,7 +165,8 @@ def execute_sql_file_from_dsn(
 
 def _significant_sql(statement: str) -> str:
     parts: list[str] = []
-    for ttype, value in sqlparse.lexer.tokenize(statement):
+    tokenize = cast(Callable[[str], Iterator[tuple[object, str]]], sqlparse.lexer.tokenize)
+    for ttype, value in tokenize(statement):
         if ttype in sql_tokens.Comment or ttype in (sql_tokens.Whitespace, sql_tokens.Newline):
             continue
         parts.append(value)

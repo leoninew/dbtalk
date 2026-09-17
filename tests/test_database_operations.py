@@ -713,9 +713,7 @@ def test_exec_dry_run_prints_sql_without_executing(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    file_preview = runner.invoke(
-        cli, ["exec", "--dsn", dsn, "--file", str(script), "--dry-run"]
-    )
+    file_preview = runner.invoke(cli, ["exec", "--dsn", dsn, "--file", str(script), "--dry-run"])
     assert file_preview.exit_code == 0, file_preview.output
     assert "UPDATE users SET name = 'Grace' WHERE id = 1;" in file_preview.output
     assert "UPDATE users SET active = 0 WHERE id = 1;" in file_preview.output
