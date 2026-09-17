@@ -49,7 +49,9 @@ from dbtalk.database.operations import (
     json_safe_value,
     parse_parameters,
     query_from_environment,
+    read_sql_file,
     render_query,
+    sql_script_statements,
 )
 from dbtalk.database.sqlalchemy_transfer import (
     _encoded_rows,
@@ -624,6 +626,117 @@ def test_sqlalchemy_transfer_covers_dialect_boundaries() -> None:
         )
     )
     assert encoded == [("01:02:03.4",)]
+
+
+def test_sql_script_statements_skips_comments_and_transaction_control() -> None:
+    statements = sql_script_statements(
+        """
+        /* header */
+        START TRANSACTION;
+        -- cleanup
+        DELETE FROM users WHERE id = 1;
+        INSERT INTO users (id, name) VALUES (1, '{"optional":true,"note":"a;b"}');
+        COMMIT;
+        """
+    )
+    assert statements == (
+        "DELETE FROM users WHERE id = 1",
+        "INSERT INTO users (id, name) VALUES (1, '{\"optional\":true,\"note\":\"a;b\"}')",
+    )
+
+
+def test_read_sql_file_rejects_missing_empty_and_directory(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.sql"
+    with pytest.raises(DatabaseOperationError, match="SQL file does not exist"):
+        read_sql_file(missing)
+    empty = tmp_path / "empty.sql"
+    empty.write_text(" \n", encoding="utf-8")
+    with pytest.raises(DatabaseOperationError, match="SQL file is empty"):
+        read_sql_file(empty)
+    with pytest.raises(DatabaseOperationError, match="SQL file path is a directory"):
+        read_sql_file(tmp_path)
+
+
+def test_exec_file_runs_literal_script_in_one_transaction(tmp_path: Path) -> None:
+    path = tmp_path / "cli.db"
+    create_database(path)
+    dsn = f"sqlite:///{path.as_posix()}"
+    runner = CliRunner()
+    script = tmp_path / "update.sql"
+    script.write_text(
+        """
+        START TRANSACTION;
+        UPDATE users SET name = '{"optional":true}' WHERE id = 1;
+        COMMIT;
+        """,
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(cli, ["exec", "--dsn", dsn, "--file", str(script)])
+    assert result.exit_code == 0, result.output
+    assert "1 rows affected" in result.output
+
+    query = runner.invoke(
+        cli,
+        ["query", "--dsn", dsn, "--sql", "SELECT name FROM users WHERE id = 1", "--format", "json"],
+    )
+    assert query.exit_code == 0, query.output
+    assert json.loads(query.output)["rows"] == [{"name": '{"optional":true}'}]
+
+
+def test_exec_file_rolls_back_when_a_later_statement_fails(tmp_path: Path) -> None:
+    path = tmp_path / "rollback.db"
+    create_database(path)
+    dsn = f"sqlite:///{path.as_posix()}"
+    script = tmp_path / "bad.sql"
+    script.write_text(
+        "UPDATE users SET name = 'Grace' WHERE id = 1;\nUPDATE missing SET name = 1;\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(cli, ["exec", "--dsn", dsn, "--file", str(script)])
+    assert result.exit_code != 0
+    assert "database execution failed" in result.output
+
+    query = CliRunner().invoke(
+        cli,
+        ["query", "--dsn", dsn, "--sql", "SELECT name FROM users WHERE id = 1", "--format", "json"],
+    )
+    assert query.exit_code == 0, query.output
+    assert json.loads(query.output)["rows"] == [{"name": "Ada"}]
+
+
+def test_exec_requires_sql_or_file_exclusively(tmp_path: Path) -> None:
+    path = tmp_path / "cli.db"
+    create_database(path)
+    dsn = f"sqlite:///{path.as_posix()}"
+    runner = CliRunner()
+    script = tmp_path / "ok.sql"
+    script.write_text("UPDATE users SET name = 'Grace' WHERE id = 1;", encoding="utf-8")
+
+    neither = runner.invoke(cli, ["exec", "--dsn", dsn])
+    assert neither.exit_code != 0
+    assert "provide exactly one of --sql or --file" in neither.output
+
+    both = runner.invoke(
+        cli,
+        ["exec", "--dsn", dsn, "--sql", "SELECT 1", "--file", str(script)],
+    )
+    assert both.exit_code != 0
+    assert "provide exactly one of --sql or --file" in both.output
+
+    with_param = runner.invoke(
+        cli,
+        ["exec", "--dsn", dsn, "--file", str(script), "--param", "id=1"],
+    )
+    assert with_param.exit_code != 0
+    assert "--param cannot be used with --file" in with_param.output
+
+    comments_only = tmp_path / "comments.sql"
+    comments_only.write_text("-- only a comment\n", encoding="utf-8")
+    no_statements = runner.invoke(cli, ["exec", "--dsn", dsn, "--file", str(comments_only)])
+    assert no_statements.exit_code != 0
+    assert "SQL file contains no executable statements" in no_statements.output
 
 
 def test_query_and_exec_cli_use_dsn_environment(

@@ -58,6 +58,10 @@ uv run dbtalk query \
 uv run dbtalk exec \
   --dsn-env DBTALK_DSN_APP \
   --sql 'CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)'
+
+uv run dbtalk exec \
+  --dsn-env DBTALK_DSN_APP \
+  --file ./data/notes.sql
 ```
 
 `query` 使用只读会话，`exec` 使用写会话。叶子命令可加 `-v` 查看清洗后的异常细节。
@@ -78,7 +82,7 @@ Agent 在第一条数据库命令前将 DSN 写入 `.env`。`--dsn-env DBTALK_DS
 | `dbtalk postgres permissions list/show` | 查看 PostgreSQL 原生权限 |
 | `dbtalk mysql dump/restore` | 处理 MySQL SQL dump |
 | `dbtalk postgres dump/restore` | 处理 PostgreSQL custom archive |
-| `dbtalk query/exec` | 查询或执行单条 SQL |
+| `dbtalk query/exec` | 查询或执行 SQL；`exec --file` 执行 UTF-8 SQL 脚本 |
 | `dbtalk export/import` | 传输 JSONL 数据 |
 
 运行 `uv run dbtalk --help` 或子命令的 `--help` 查看完整参数。

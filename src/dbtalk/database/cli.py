@@ -14,7 +14,14 @@ from dbtalk.cli_runtime import DbtalkGroup
 from dbtalk.context import DbtalkContext, dbtalk_context
 
 from .format import gzip_output_path
-from .operations import execute_from_dsn, parse_parameters, query_from_dsn, render_query
+from .models import DatabaseOperationError
+from .operations import (
+    execute_from_dsn,
+    execute_sql_file_from_dsn,
+    parse_parameters,
+    query_from_dsn,
+    render_query,
+)
 from .transfer import (
     DatabaseDriver,
     DatabaseTransferError,
@@ -449,7 +456,13 @@ def query_command(
 @database.command("exec", context_settings=CONTEXT_SETTINGS)
 @click.option("--dsn", "dsn_value", help="Complete SQLAlchemy-style database DSN.")
 @click.option("--dsn-env", help="Environment variable containing the database DSN.")
-@click.option("--sql", required=True, help="One SQL statement using named bind parameters.")
+@click.option("--sql", help="One SQL statement using named bind parameters.")
+@click.option(
+    "--file",
+    "sql_file",
+    type=click.Path(path_type=Path),
+    help="UTF-8 SQL script path. Mutually exclusive with --sql.",
+)
 @click.option(
     "--timeout",
     "timeout_seconds",
@@ -476,22 +489,39 @@ def exec_command(
     ctx: click.Context,
     dsn_value: str | None,
     dsn_env: str | None,
-    sql: str,
+    sql: str | None,
+    sql_file: Path | None,
     timeout_seconds: int | None,
     connect_timeout_seconds: int | None,
     parameters: tuple[str, ...],
 ) -> None:
-    """Execute one parameterized SQL statement against a DSN."""
+    """Execute one parameterized SQL statement or a SQL script file against a DSN."""
 
     try:
-        result = execute_from_dsn(
-            dsn_value,
-            dsn_env,
-            sql,
-            parse_parameters(parameters),
-            timeout_seconds=exec_timeout_from_context(ctx, timeout_seconds),
-            connect_timeout_seconds=connect_timeout_seconds,
-        )
+        timeout_seconds = exec_timeout_from_context(ctx, timeout_seconds)
+        if (sql is None) == (sql_file is None):
+            raise DatabaseOperationError("provide exactly one of --sql or --file")
+        if sql is not None:
+            result = execute_from_dsn(
+                dsn_value,
+                dsn_env,
+                sql,
+                parse_parameters(parameters),
+                timeout_seconds=timeout_seconds,
+                connect_timeout_seconds=connect_timeout_seconds,
+            )
+        else:
+            if sql_file is None:
+                raise DatabaseOperationError("provide exactly one of --sql or --file")
+            if parameters:
+                raise DatabaseOperationError("--param cannot be used with --file")
+            result = execute_sql_file_from_dsn(
+                dsn_value,
+                dsn_env,
+                sql_file,
+                timeout_seconds=timeout_seconds,
+                connect_timeout_seconds=connect_timeout_seconds,
+            )
     except DatabaseTransferError as error:
         raise click.ClickException(str(error)) from error
     except RuntimeError as error:

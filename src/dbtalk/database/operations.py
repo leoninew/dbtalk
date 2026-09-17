@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from collections.abc import Mapping
 from datetime import date, datetime, time
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from tabulate import tabulate
@@ -14,6 +16,11 @@ from tabulate import tabulate
 from .connection import DatabaseClient
 from .dsn import ParsedDsn, dsn_from_environment, parse_dsn
 from .models import DatabaseOperationError, ExecutionResult, QueryResult
+
+_TRANSACTION_CONTROL = re.compile(
+    r"^(?:START\s+TRANSACTION|BEGIN(?:\s+TRANSACTION)?|COMMIT|ROLLBACK)(?:\s+WORK)?$",
+    re.IGNORECASE,
+)
 
 
 def parse_parameters(values: tuple[str, ...]) -> dict[str, object]:
@@ -105,6 +112,123 @@ def execute_from_dsn(
         connect_timeout_seconds=connect_timeout_seconds,
     ) as client:
         return client.execute(statement, parameters, read_only=False)
+
+
+def read_sql_file(path: Path) -> str:
+    if not path.exists():
+        raise DatabaseOperationError("SQL file does not exist")
+    if path.is_dir():
+        raise DatabaseOperationError("SQL file path is a directory")
+    try:
+        content = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as error:
+        raise DatabaseOperationError("SQL file is not valid UTF-8") from error
+    if not content.strip():
+        raise DatabaseOperationError("SQL file is empty")
+    return content
+
+
+def sql_script_statements(script: str) -> tuple[str, ...]:
+    statements: list[str] = []
+    current: list[str] = []
+    index = 0
+    length = len(script)
+    in_single = False
+    in_double = False
+    in_backtick = False
+    while index < length:
+        char = script[index]
+        nxt = script[index + 1] if index + 1 < length else ""
+        if not in_single and not in_double and not in_backtick:
+            if char == "-" and nxt == "-":
+                index = _skip_line_comment(script, index)
+                continue
+            if char == "#":
+                index = _skip_line_comment(script, index)
+                continue
+            if char == "/" and nxt == "*":
+                index = _skip_block_comment(script, index)
+                continue
+            if char == ";":
+                _append_script_statement(statements, "".join(current))
+                current = []
+                index += 1
+                continue
+            if char == "'":
+                in_single = True
+            elif char == '"':
+                in_double = True
+            elif char == "`":
+                in_backtick = True
+            current.append(char)
+            index += 1
+            continue
+        if char == "\\" and nxt:
+            current.append(char)
+            current.append(nxt)
+            index += 2
+            continue
+        current.append(char)
+        if in_single and char == "'":
+            if nxt == "'":
+                current.append(nxt)
+                index += 2
+                continue
+            in_single = False
+        elif in_double and char == '"':
+            if nxt == '"':
+                current.append(nxt)
+                index += 2
+                continue
+            in_double = False
+        elif in_backtick and char == "`":
+            if nxt == "`":
+                current.append(nxt)
+                index += 2
+                continue
+            in_backtick = False
+        index += 1
+    _append_script_statement(statements, "".join(current))
+    return tuple(statements)
+
+
+def execute_sql_file_from_dsn(
+    dsn: str | None,
+    environment_name: str | None,
+    path: Path,
+    *,
+    timeout_seconds: int,
+    connect_timeout_seconds: int | None = None,
+) -> ExecutionResult:
+    statements = sql_script_statements(read_sql_file(path))
+    if not statements:
+        raise DatabaseOperationError("SQL file contains no executable statements")
+    parsed = _resolve_operation_dsn(dsn, environment_name)
+    with DatabaseClient(
+        parsed,
+        timeout_seconds=timeout_seconds,
+        connect_timeout_seconds=connect_timeout_seconds,
+    ) as client:
+        return client.execute_script(statements)
+
+
+def _skip_line_comment(script: str, index: int) -> int:
+    while index < len(script) and script[index] not in "\n\r":
+        index += 1
+    return index
+
+
+def _skip_block_comment(script: str, index: int) -> int:
+    index += 2
+    while index < len(script) - 1 and not (script[index] == "*" and script[index + 1] == "/"):
+        index += 1
+    return index + 2 if index < len(script) - 1 else len(script)
+
+
+def _append_script_statement(statements: list[str], raw: str) -> None:
+    statement = raw.strip().rstrip(";").strip()
+    if statement and _TRANSACTION_CONTROL.fullmatch(statement) is None:
+        statements.append(statement)
 
 
 def _resolve_operation_dsn(dsn: str | None, environment_name: str | None) -> ParsedDsn:
