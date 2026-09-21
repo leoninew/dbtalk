@@ -268,7 +268,7 @@ def test_postgresql_password_ddl_requires_a_driver_connection(
     monkeypatch.setattr(postgres_role, "create_engine", lambda _: FakeEngine(connection))
     monkeypatch.setenv("POSTGRES_ROLE_PASSWORD", "test-password")
 
-    with pytest.raises(DatabaseOperationError, match="PostgreSQL role management failed"):
+    with pytest.raises(DatabaseOperationError, match="driver connection is not available"):
         postgres_role.create_role(postgresql_dsn(), "app_role", "POSTGRES_ROLE_PASSWORD")
 
 

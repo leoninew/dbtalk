@@ -22,7 +22,7 @@ from dbtalk.database.dsn import (
     parse_dsn,
     password_from_environment,
 )
-from dbtalk.database.models import DatabaseOperationError
+from dbtalk.database.models import DatabaseOperationError, sanitize_error_detail
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 Profile = Literal["readonly", "readwrite", "migrator"]
@@ -541,7 +541,7 @@ def _run_management_operation[OperationResult](
     except DatabaseOperationError:
         raise
     except SQLAlchemyError as error:
-        raise DatabaseOperationError("MySQL user management failed") from error
+        raise DatabaseOperationError(f"MySQL user management failed: {sanitize_error_detail(str(error))}") from error
     finally:
         if engine is not None:
             engine.dispose()
