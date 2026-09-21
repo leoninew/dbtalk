@@ -22,7 +22,7 @@ from dbtalk.database.dsn import (
     parse_dsn,
     password_from_environment,
 )
-from dbtalk.database.models import DatabaseOperationError
+from dbtalk.database.models import DatabaseOperationError, sanitize_error_detail
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 Profile = Literal["readonly", "readwrite", "migrator"]
@@ -541,7 +541,7 @@ def _run_management_operation[OperationResult](
     except DatabaseOperationError:
         raise
     except (PsycopgError, SQLAlchemyError) as error:
-        raise DatabaseOperationError("PostgreSQL role management failed") from error
+        raise DatabaseOperationError(f"PostgreSQL role management failed: {sanitize_error_detail(str(error))}") from error
     finally:
         if engine is not None:
             engine.dispose()
@@ -628,7 +628,7 @@ def _execute_password_ddl(connection: Connection, statement: sql.Composable) -> 
 
     driver_connection = connection.connection.driver_connection
     if driver_connection is None:
-        raise DatabaseOperationError("PostgreSQL role management failed")
+        raise DatabaseOperationError("driver connection is not available for DDL execution")
     driver_connection.execute(statement)
 
 

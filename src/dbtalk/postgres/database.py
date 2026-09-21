@@ -12,7 +12,7 @@ from tabulate import tabulate
 
 from dbtalk.cli_runtime import DbtalkGroup
 from dbtalk.database.dsn import ParsedDsn, dsn_from_environment, parse_dsn
-from dbtalk.database.models import DatabaseOperationError
+from dbtalk.database.models import DatabaseOperationError, sanitize_error_detail
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
@@ -144,8 +144,10 @@ def _run_management_operation[Result](
         engine = create_engine(parsed.url)
         with engine.connect() as connection:
             return operation(connection.execution_options(isolation_level="AUTOCOMMIT"))
+    except DatabaseOperationError:
+        raise
     except SQLAlchemyError as error:
-        raise DatabaseOperationError("PostgreSQL database management failed") from error
+        raise DatabaseOperationError(f"PostgreSQL database management failed: {sanitize_error_detail(str(error))}") from error
     finally:
         if engine is not None:
             engine.dispose()
