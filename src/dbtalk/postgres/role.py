@@ -541,7 +541,9 @@ def _run_management_operation[OperationResult](
     except DatabaseOperationError:
         raise
     except (PsycopgError, SQLAlchemyError) as error:
-        raise DatabaseOperationError(f"PostgreSQL role management failed: {sanitize_error_detail(str(error))}") from error
+        raise DatabaseOperationError(
+            f"PostgreSQL role management failed: {sanitize_error_detail(str(error))}"
+        ) from error
     finally:
         if engine is not None:
             engine.dispose()
