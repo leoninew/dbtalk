@@ -140,7 +140,9 @@ def _run_management_operation[Result](
     except DatabaseOperationError:
         raise
     except SQLAlchemyError as error:
-        raise DatabaseOperationError(f"MySQL database management failed: {sanitize_error_detail(str(error))}") from error
+        raise DatabaseOperationError(
+            f"MySQL database management failed: {sanitize_error_detail(str(error))}"
+        ) from error
     finally:
         if engine is not None:
             engine.dispose()
