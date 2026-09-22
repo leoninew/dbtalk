@@ -397,7 +397,11 @@ def import_command_arguments(options: dict[str, object]) -> ImportCommandArgumen
 @database.command("query", context_settings=CONTEXT_SETTINGS)
 @click.option("--dsn", "dsn_value", help="Complete SQLAlchemy-style database DSN.")
 @click.option("--dsn-env", help="Environment variable containing the database DSN.")
-@click.option("--sql", required=True, help="One SQL statement using named bind parameters.")
+@click.option(
+    "--sql",
+    required=True,
+    help="One SQL statement; use named bind parameters with --param.",
+)
 @click.option(
     "--timeout",
     "timeout_seconds",
@@ -437,7 +441,7 @@ def query_command(
     parameters: tuple[str, ...],
     output_format: str,
 ) -> None:
-    """Run one parameterized SQL query against a DSN."""
+    """Run one SQL query against a DSN."""
 
     try:
         result = query_from_dsn(
@@ -458,7 +462,10 @@ def query_command(
 @database.command("exec", context_settings=CONTEXT_SETTINGS)
 @click.option("--dsn", "dsn_value", help="Complete SQLAlchemy-style database DSN.")
 @click.option("--dsn-env", help="Environment variable containing the database DSN.")
-@click.option("--sql", help="One SQL statement using named bind parameters.")
+@click.option(
+    "--sql",
+    help="One SQL statement; use named bind parameters with --param.",
+)
 @click.option(
     "--file",
     "sql_file",
@@ -503,7 +510,7 @@ def exec_command(
     parameters: tuple[str, ...],
     dry_run: bool,
 ) -> None:
-    """Execute one parameterized SQL statement or a SQL script file against a DSN."""
+    """Execute one SQL statement or a SQL script file against a DSN."""
 
     try:
         timeout_seconds = exec_timeout_from_context(ctx, timeout_seconds)

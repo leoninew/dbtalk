@@ -48,7 +48,10 @@ class DatabaseSession:
 
     def query(self, statement: str, parameters: Mapping[str, object] | None = None) -> QueryResult:
         try:
-            result = self._connection.execute(text(statement), dict(parameters or {}))
+            if parameters:
+                result = self._connection.execute(text(statement), dict(parameters))
+            else:
+                result = self._connection.exec_driver_sql(statement)
             columns = tuple(str(key) for key in result.keys())  # noqa: SIM118
             rows = tuple(tuple(row) for row in result.fetchall())
         except SQLAlchemyError as error:
@@ -61,7 +64,10 @@ class DatabaseSession:
         self, statement: str, parameters: Mapping[str, object] | None = None
     ) -> ExecutionResult:
         try:
-            result = self._connection.execute(text(statement), dict(parameters or {}))
+            if parameters:
+                result = self._connection.execute(text(statement), dict(parameters))
+            else:
+                result = self._connection.exec_driver_sql(statement)
         except SQLAlchemyError as error:
             if self._deadline is not None and self._deadline.expired:
                 raise DatabaseOperationError("database execution timed out") from error
@@ -214,7 +220,10 @@ class AsyncDatabaseSession:
         self, statement: str, parameters: Mapping[str, object] | None = None
     ) -> QueryResult:
         try:
-            result = await self._connection.execute(text(statement), dict(parameters or {}))
+            if parameters:
+                result = await self._connection.execute(text(statement), dict(parameters))
+            else:
+                result = await self._connection.exec_driver_sql(statement)
             columns = tuple(str(key) for key in result.keys())  # noqa: SIM118
             rows = tuple(tuple(row) for row in result.fetchall())
         except SQLAlchemyError as error:
@@ -225,7 +234,10 @@ class AsyncDatabaseSession:
         self, statement: str, parameters: Mapping[str, object] | None = None
     ) -> ExecutionResult:
         try:
-            result = await self._connection.execute(text(statement), dict(parameters or {}))
+            if parameters:
+                result = await self._connection.execute(text(statement), dict(parameters))
+            else:
+                result = await self._connection.exec_driver_sql(statement)
         except SQLAlchemyError as error:
             raise DatabaseOperationError("database execution failed") from error
         return ExecutionResult(row_count=max(result.rowcount, 0))
