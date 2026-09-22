@@ -264,6 +264,9 @@ def test_database_session_maps_sqlalchemy_errors() -> None:
         def execute(self, *_: object) -> Any:
             raise SQLAlchemyError("secret database details")
 
+        def exec_driver_sql(self, *_: object) -> Any:
+            raise SQLAlchemyError("secret database details")
+
     session = DatabaseSession(cast(Any, FailingConnection()))
     with pytest.raises(DatabaseOperationError, match="database query failed"):
         session.query("SELECT 1")
@@ -277,6 +280,9 @@ async def test_async_session_maps_sqlalchemy_errors_and_context_manager(
 ) -> None:
     class FailingConnection:
         async def execute(self, *_: object) -> Any:
+            raise SQLAlchemyError("secret database details")
+
+        async def exec_driver_sql(self, *_: object) -> Any:
             raise SQLAlchemyError("secret database details")
 
     session = AsyncDatabaseSession(cast(Any, FailingConnection()))
@@ -331,9 +337,14 @@ def test_sync_client_query_exec_and_transaction_rollback(tmp_path: Path) -> None
     create_database(path)
     client = DatabaseClient(f"sqlite:///{path.as_posix()}")
     try:
+        literal_json = '{"optional":null}'
+        assert client.query(f"SELECT '{literal_json}' AS payload").rows == ((literal_json,),)
+        assert (
+            client.execute(f"UPDATE users SET name = '{literal_json}' WHERE id = 1").row_count == 1
+        )
         result = client.query("SELECT id, name FROM users WHERE id = :id", {"id": 1})
         assert result.columns == ("id", "name")
-        assert result.rows == ((1, "Ada"),)
+        assert result.rows == ((1, literal_json),)
         assert (
             client.execute(
                 "UPDATE users SET name = :name WHERE id = :id", {"name": "Grace", "id": 1}
@@ -356,7 +367,14 @@ async def test_async_client_query_exec_and_transaction(tmp_path: Path) -> None:
     create_database(path)
     client = AsyncDatabaseClient(f"sqlite:///{path.as_posix()}")
     try:
-        assert (await client.query("SELECT name FROM users")).rows == (("Ada",),)
+        literal_json = '{"optional":null}'
+        assert (await client.query(f"SELECT '{literal_json}' AS payload")).rows == (
+            (literal_json,),
+        )
+        assert (
+            await client.execute(f"UPDATE users SET name = '{literal_json}' WHERE id = 1")
+        ).row_count == 1
+        assert (await client.query("SELECT name FROM users")).rows == ((literal_json,),)
         assert (
             await client.execute(
                 "UPDATE users SET active = :active WHERE id = :id",
@@ -804,6 +822,42 @@ def test_exec_requires_sql_or_file_exclusively(tmp_path: Path) -> None:
     no_statements = runner.invoke(cli, ["exec", "--dsn", dsn, "--file", str(comments_only)])
     assert no_statements.exit_code != 0
     assert "SQL file contains no executable statements" in no_statements.output
+
+
+def test_cli_without_parameters_executes_sql_literally(tmp_path: Path) -> None:
+    path = tmp_path / "literal-sql.db"
+    create_database(path)
+    dsn = f"sqlite:///{path.as_posix()}"
+    runner = CliRunner()
+    literal_json = '{"optional":null}'
+
+    query = runner.invoke(
+        cli,
+        [
+            "query",
+            "--dsn",
+            dsn,
+            "--sql",
+            f"SELECT '{literal_json}' AS payload",
+            "--format",
+            "json",
+        ],
+    )
+    assert query.exit_code == 0, query.output
+    assert json.loads(query.output)["rows"] == [{"payload": literal_json}]
+
+    execution = runner.invoke(
+        cli,
+        [
+            "exec",
+            "--dsn",
+            dsn,
+            "--sql",
+            f"UPDATE users SET name = '{literal_json}' WHERE id = 1",
+        ],
+    )
+    assert execution.exit_code == 0, execution.output
+    assert "1 rows affected" in execution.output
 
 
 def test_query_and_exec_cli_use_dsn_environment(
