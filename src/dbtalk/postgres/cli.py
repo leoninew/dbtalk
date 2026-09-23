@@ -15,6 +15,7 @@ from dbtalk.settings import Settings
 from .client import PostgresConnection
 from .database import schema as schema_management
 from .dump import PostgresDumpOptions, dump_database, resolve_dump_options
+from .owner import owner
 from .permissions import permissions
 from .restore import PostgresRestoreOptions, restore_database
 from .role import grant_command, revoke_command, role
@@ -41,6 +42,7 @@ postgres.add_command(role)
 postgres.add_command(grant_command)
 postgres.add_command(revoke_command)
 postgres.add_command(permissions)
+postgres.add_command(owner)
 
 
 @postgres.command("dump", context_settings=CONTEXT_SETTINGS)

@@ -18,6 +18,7 @@ uv run dbtalk postgres permissions --help
 | `role list/create/enable/disable/password/drop` | 管理 role 生命周期，不授予业务权限。 |
 | `grant` / `revoke` | 按 profile 或原生 `--privilege` 授予、撤销 database/schema 权限。 |
 | `permissions list/show` | 查看当前 DSN 可见的原生授权，可按 role、database、schema 筛选。 |
+| `owner reassign` | 预览或转移一个 role 在当前库及共享对象上的所有权。 |
 | `dump` / `restore` | 创建或恢复单库 custom archive。 |
 
 ## DSN 与客户端
@@ -44,6 +45,21 @@ postgres:
 
 `postgres` 与 `mysql` 使用同一类配置边界：只配置默认 dump 目录和 Docker client image；连接、target、制品文件路径与恢复策略仍由每次命令决定。可用 `DBTALK_POSTGRES__OUTPUT_DIRECTORY` 覆盖默认 dump 目录。
 
+## Object ownership
+
+`owner reassign` 默认只预览。必须提供目标 database、原 role、新 role 和管理 DSN；`--yes` 才执行 PostgreSQL 原生 `REASSIGN OWNED`：
+
+```bash
+uv run dbtalk postgres owner reassign \
+  --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
+  --database app --from-role old_owner --to-role new_owner
+uv run dbtalk postgres owner reassign \
+  --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
+  --database app --from-role old_owner --to-role new_owner --yes
+# 预览含共享对象时，还需在执行命令中加入 --include-shared
+```
+
+DSN 连接到 `--database` 指定的库。操作会转移该 role 在当前库拥有的所有对象，同时可能转移它拥有的数据库、表空间等共享对象；不能限制在某个 schema 或某类表。预览按目录统计当前库及共享对象，但不是执行后状态的保证；执行前须核对共享对象，确认身份和目标库。若源 role 拥有共享对象，除 `--yes` 外还必须加 `--include-shared`，否则拒绝执行；这个选项不会缩小原生命令的范围。原生命令要求执行者具备源和目标 role 的成员资格（超级用户可执行）。转移不会撤销旧 role 从其他对象获得的授权，也不重写 default privileges。若只转某些表，应改用明确范围的 `ALTER TABLE ... OWNER TO ...`，不要用本命令。
 ## Schema management
 
 `schema` 子命令管理 PostgreSQL schema/database，不执行任意 SQL、不管理 role，也不替代 dump/restore。`list`、`create` 与 `drop` 的管理 DSN 都可以省略 database path。`drop` 以 `--name` 为删除目标，连接后读取当前会话数据库；若与 `--name` 相同则拒绝。账号还需要相应的建库或删库权限。

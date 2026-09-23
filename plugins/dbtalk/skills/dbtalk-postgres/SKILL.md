@@ -65,6 +65,16 @@ dbtalk postgres restore --dsn-env DBTALK_DSN_APP --database app --input ./data/a
 
 restore 在写入前用 `pg_restore --list` 校验 archive。即使启用 fail-fast，restore 也不能整体回滚；完成后确认命令成功退出，并按需检查代表性对象和数据。
 
+## Owner 转移
+
+`dbtalk postgres owner reassign` 使用原生 `REASSIGN OWNED` 转移指定 role 的所有对象；默认预览，显式 `--yes` 才执行。操作必须给出 `--database`、`--from-role`、`--to-role`，并使用 `.env` 的 `DBTALK_DSN_POSTGRES_ADMIN`；执行前核对预览中的当前数据库对象和 cluster 共享对象（数据库、表空间等）。它**不是**单个 schema 或表的权限授予；grant migrator 也不会改变 owner。不得在仅授权某些表或某个 schema 时使用。目标 role 必须与源 role 不同。变更前必须确认目标数据库、两个 role、可能受影响的共享对象和写入授权。预览中出现共享对象时，加 `--yes` 也不会直接执行；只有明确接受跨库共享对象变更并追加 `--include-shared` 才能执行。
+
+```bash
+dbtalk postgres owner reassign --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
+  --database app --from-role old_owner --to-role new_owner
+dbtalk postgres owner reassign --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
+  --database app --from-role old_owner --to-role new_owner --yes
+```
 ## Role 与授权
 
 先查看命令帮助：
