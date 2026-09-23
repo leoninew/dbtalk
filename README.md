@@ -83,6 +83,7 @@ Agents write the DSN to `.env` before the first database command. `--dsn-env DBT
 | `dbtalk postgres schema` | Manage PostgreSQL schemas/databases |
 | `dbtalk postgres role` | Manage PostgreSQL roles |
 | `dbtalk postgres grant` / `dbtalk postgres revoke` | Grant or revoke PostgreSQL permissions |
+| `dbtalk postgres owner reassign` | Preview or transfer PostgreSQL role-owned objects |
 | `dbtalk mysql permissions list/show` | Inspect native MySQL permissions |
 | `dbtalk postgres permissions list/show` | Inspect native PostgreSQL permissions |
 | `dbtalk mysql dump/restore` | Create or restore MySQL SQL dumps |
