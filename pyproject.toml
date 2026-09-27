@@ -15,6 +15,7 @@ dependencies = [
   "asyncmy>=0.2,<1",
   "click>=8.1,<9",
   "dynaconf>=3.3,<4",
+  "greenlet>=3.5.5",
   "psycopg[binary]>=3.2,<4",
   "pymysql>=1.1,<2",
   "python-dotenv>=1.1,<2",
