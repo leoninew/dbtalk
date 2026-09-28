@@ -309,13 +309,14 @@ def test_load_backup_config_rejects_a_connection_dsn_with_a_database(tmp_path: P
         backup_db.load_backup_config(config_path)
 
 
-def test_sync_parser_accepts_a_config_path(tmp_path: Path) -> None:
+def test_sync_parser_accepts_a_config_path_and_continue_on_error(tmp_path: Path) -> None:
     config_path = tmp_path / "backup-db.yaml"
 
-    args = backup_db.build_parser().parse_args(["sync", "--config", str(config_path)])
+    args = backup_db.build_parser().parse_args(["sync", "-c", "--config", str(config_path)])
 
     assert args.command == "sync"
     assert args.config == config_path
+    assert args.continue_on_error is True
 
 
 def test_list_connection_databases_uses_the_engine_specific_catalog() -> None:
@@ -410,5 +411,49 @@ def test_run_sync_does_not_write_the_config_when_a_catalog_list_fails(tmp_path: 
         pytest.raises(backup_db.BackupError, match="unreachable"),
     ):
         backup_db.run_sync(args)
+
+    assert config_path.read_text(encoding="utf-8") == original
+
+
+def test_run_sync_continues_after_a_catalog_failure_and_writes_successful_changes(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "backup-db.yaml"
+    config_path.write_text(_sync_config(), encoding="utf-8")
+    args = backup_db.build_parser().parse_args(["sync", "-c", "--config", str(config_path)])
+
+    with patch.object(
+        backup_db,
+        "list_connection_databases",
+        side_effect=(backup_db.BackupError("unreachable"), ("audit", "new_postgres")),
+    ) as list_databases:
+        assert backup_db.run_sync(args) == 1
+
+    assert list_databases.call_count == 2
+    synchronized = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert synchronized["connections"][0]["databases"] == [
+        {"name": "retained", "enabled": False, "exclude_tables": ["audit_log"]},
+        {"name": "stale", "enabled": True},
+    ]
+    assert synchronized["connections"][1]["databases"] == [
+        {"name": "audit", "enabled": False},
+        {"name": "new_postgres", "enabled": True},
+    ]
+
+
+def test_run_sync_continue_on_error_returns_failure_without_rewriting_unchanged_config(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "backup-db.yaml"
+    config_path.write_text(_sync_config(), encoding="utf-8")
+    original = config_path.read_text(encoding="utf-8")
+    args = backup_db.build_parser().parse_args(["sync", "-c", "--config", str(config_path)])
+
+    with patch.object(
+        backup_db,
+        "list_connection_databases",
+        side_effect=(backup_db.BackupError("unreachable"), ("audit", "stale_postgres")),
+    ):
+        assert backup_db.run_sync(args) == 1
 
     assert config_path.read_text(encoding="utf-8") == original
