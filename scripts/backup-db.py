@@ -176,6 +176,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_CONFIG_PATH,
         help="Backup YAML path (default: scripts/backup-db.yaml).",
     )
+    sync_parser.add_argument(
+        "-c",
+        "--continue-on-error",
+        action="store_true",
+        help="Continue synchronizing remaining connections after one fails.",
+    )
     return parser
 
 
@@ -704,6 +710,7 @@ def run_sync(args: argparse.Namespace) -> int:
         target.connection_name: target.engine for target in backup_config.targets
     }
     changed = False
+    failed = 0
     for index, (connection, raw_connection) in enumerate(
         zip(backup_config.connections, raw_connections, strict=True), 1
     ):
@@ -721,14 +728,23 @@ def run_sync(args: argparse.Namespace) -> int:
             engine,
             connection.name,
         )
-        discovered = list_connection_databases(connection, engine)
-        raw_databases = _list(connection_config.get("databases"), f"{connection_context}.databases")
-        synchronized, added, removed = _sync_databases(
-            raw_databases,
-            discovered,
-            engine,
-            f"{connection_context}.databases",
-        )
+        try:
+            discovered = list_connection_databases(connection, engine)
+            raw_databases = _list(
+                connection_config.get("databases"), f"{connection_context}.databases"
+            )
+            synchronized, added, removed = _sync_databases(
+                raw_databases,
+                discovered,
+                engine,
+                f"{connection_context}.databases",
+            )
+        except (BackupError, OSError) as error:
+            if not args.continue_on_error:
+                raise
+            failed += 1
+            logging.error("sync failed connection=%s error=%s", connection.name, error)
+            continue
         if synchronized == raw_databases:
             logging.info("sync unchanged connection=%s", connection.name)
             continue
@@ -742,11 +758,11 @@ def run_sync(args: argparse.Namespace) -> int:
         )
 
     if not changed:
-        logging.info("sync completed: no changes")
-        return 0
+        logging.info("sync completed: no changes failed=%d", failed)
+        return 1 if failed else 0
     _write_backup_config(config_path, raw_config)
-    logging.info("sync completed: config=%s", config_path)
-    return 0
+    logging.info("sync completed: config=%s failed=%d", config_path, failed)
+    return 1 if failed else 0
 
 
 def run_backups(args: argparse.Namespace) -> int:
