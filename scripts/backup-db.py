@@ -114,6 +114,16 @@ def positive_integer(value: str) -> int:
     return parsed
 
 
+def parse_batch_timestamp(value: str) -> str:
+    if not re.fullmatch(r"\d{8}-\d{6}(?:-\d{2,})?", value):
+        raise argparse.ArgumentTypeError("must be a backup timestamp: YYYYMMDD-HHMMSS[-NN]")
+    try:
+        datetime.strptime(value[:15], "%Y%m%d-%H%M%S")
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a valid backup timestamp") from exc
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Back up databases or test configured database connections."
@@ -135,9 +145,9 @@ def build_parser() -> argparse.ArgumentParser:
     backup_parser.add_argument(
         "-r",
         "--resume",
-        type=Path,
-        metavar="DIRECTORY",
-        help="Reuse non-empty backups from an existing batch directory.",
+        type=parse_batch_timestamp,
+        metavar="TIMESTAMP",
+        help="Resume a backup timestamp, reusing its non-empty database backups.",
     )
 
     test_parser = subparsers.add_parser(
@@ -398,47 +408,40 @@ def display_path(path: Path) -> str:
     return Path(relative).as_posix()
 
 
-def batch_directory(output_directory: Path, batch_timestamp: str) -> Path:
-    candidate = output_directory / batch_timestamp
+def next_batch_timestamp(
+    output_directory: Path, batch_timestamp: str, targets: Sequence[BackupTarget]
+) -> str:
+    candidate = batch_timestamp
     sequence = 1
-    while candidate.exists():
-        candidate = output_directory / f"{batch_timestamp}-{sequence:02d}"
+    while manifest_path(output_directory, candidate).exists() or any(
+        output_path(target, output_directory, candidate).exists() for target in targets
+    ):
+        candidate = f"{batch_timestamp}-{sequence:02d}"
         sequence += 1
     return candidate
 
 
-def output_filename(target: BackupTarget) -> str:
+def output_filename(target: BackupTarget, batch_timestamp: str) -> str:
     extension = ".dump" if target.engine == "postgres" else ".sql.gz"
-    stem = "-".join((safe_component(target.connection_name), safe_component(target.database)))
-    return f"{stem}{extension}"
+    return f"{batch_timestamp}{extension}"
 
 
-def output_path(target: BackupTarget, output_directory: Path) -> Path:
-    extension = ".dump" if target.engine == "postgres" else ".sql.gz"
-    stem = "-".join((safe_component(target.connection_name), safe_component(target.database)))
-    filename = output_filename(target)
-    candidate = output_directory / filename
-    sequence = 1
-    while candidate.exists():
-        candidate = output_directory / f"{stem}-{sequence:02d}{extension}"
-        sequence += 1
-    return candidate
+def output_path(target: BackupTarget, output_directory: Path, batch_timestamp: str) -> Path:
+    directory = "_".join((safe_component(target.connection_name), safe_component(target.database)))
+    return output_directory / directory / output_filename(target, batch_timestamp)
 
 
-def reusable_backup_path(target: BackupTarget, output_directory: Path) -> Path | None:
-    candidate = output_directory / output_filename(target)
+def reusable_backup_path(
+    target: BackupTarget, output_directory: Path, batch_timestamp: str
+) -> Path | None:
+    candidate = output_path(target, output_directory, batch_timestamp)
     if candidate.is_file() and candidate.stat().st_size > 0:
         return candidate
     return None
 
 
-def manifest_path(output_directory: Path) -> Path:
-    candidate = output_directory / "backup-manifest.md"
-    sequence = 1
-    while candidate.exists():
-        candidate = output_directory / f"backup-manifest-{sequence:02d}.md"
-        sequence += 1
-    return candidate
+def manifest_path(output_directory: Path, batch_timestamp: str) -> Path:
+    return output_directory / "manifests" / f"{batch_timestamp}.md"
 
 
 def markdown_value(value: str) -> str:
@@ -449,14 +452,10 @@ def markdown_value(value: str) -> str:
 def write_manifest(
     config_path: Path,
     results: Sequence[BackupArtifact | BackupFailure],
-    batch_directory: Path,
+    output_directory: Path,
     batch_timestamp: str,
-    *,
-    replace_existing: bool = False,
 ) -> Path:
-    destination = batch_directory / "backup-manifest.md"
-    if not replace_existing:
-        destination = manifest_path(batch_directory)
+    destination = manifest_path(output_directory, batch_timestamp)
     successful_backups = sum(isinstance(result, BackupArtifact) for result in results)
     failed_backups = len(results) - successful_backups
     lines = [
@@ -464,7 +463,7 @@ def write_manifest(
         "",
         f"- Generated at (local): `{batch_timestamp}`",
         f"- Configuration: `{display_path(config_path)}`",
-        f"- Output directory: `{display_path(batch_directory)}`",
+        f"- Output directory: `{display_path(output_directory)}`",
         f"- Successful backups: `{successful_backups}`",
         f"- Failed backups: `{failed_backups}`",
         "",
@@ -498,7 +497,9 @@ def write_manifest(
                 else "MySQL SQL dump (gzip)"
             )
             if isinstance(result, BackupArtifact):
-                relative_output = result.destination.relative_to(batch_directory).as_posix()
+                relative_output = Path(
+                    os.path.relpath(result.destination, destination.parent)
+                ).as_posix()
                 lines.append(
                     f"| {markdown_value(target.database)} | "
                     f"{result.status} | {markdown_value(relative_output)} | {format_name} | "
@@ -512,6 +513,7 @@ def write_manifest(
         lines.append("")
 
     try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text("\n".join(lines), encoding="utf-8")
     except OSError as exc:
         raise BackupError(f"could not write backup manifest: {destination}") from exc
@@ -767,22 +769,23 @@ def run_sync(args: argparse.Namespace) -> int:
 
 def run_backups(args: argparse.Namespace) -> int:
     backup_config = load_backup_config(args.config)
-    batch_timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    resume_directory = getattr(args, "resume", None)
-    if resume_directory is not None:
-        batch_output_directory = resume_directory.expanduser().resolve()
-        if not batch_output_directory.is_dir():
-            raise BackupError(f"resume directory does not exist: {batch_output_directory}")
+    output_directory = backup_config.output_directory
+    resume_timestamp = args.resume
+    if resume_timestamp is not None:
+        if not output_directory.is_dir():
+            raise BackupError(f"resume output directory does not exist: {output_directory}")
+        batch_timestamp = resume_timestamp
     else:
-        batch_output_directory = batch_directory(backup_config.output_directory, batch_timestamp)
+        batch_timestamp = next_batch_timestamp(
+            output_directory, datetime.now().strftime("%Y%m%d-%H%M%S"), backup_config.targets
+        )
     total = len(backup_config.targets)
 
     logging.info(
-        "backup run started targets=%d config=%s output_dir=%s batch_dir=%s timestamp=%s",
+        "backup run started targets=%d config=%s output_dir=%s timestamp=%s",
         total,
         args.config.expanduser().resolve(),
-        backup_config.output_directory,
-        batch_output_directory,
+        output_directory,
         batch_timestamp,
     )
 
@@ -790,23 +793,19 @@ def run_backups(args: argparse.Namespace) -> int:
     if not args.continue_on_error:
         require_dsns(enabled_targets)
     settings = load_backup_settings() if enabled_targets else None
-    batch_output_directory.mkdir(parents=True, exist_ok=True)
+    output_directory.mkdir(parents=True, exist_ok=True)
 
     results: list[BackupArtifact | BackupFailure] = []
     for index, target in enumerate(backup_config.targets, 1):
         reusable_backup = (
-            reusable_backup_path(target, batch_output_directory)
-            if resume_directory is not None
+            reusable_backup_path(target, output_directory, batch_timestamp)
+            if resume_timestamp is not None
             else None
         )
         destination = (
             reusable_backup
             if reusable_backup is not None
-            else (
-                batch_output_directory / output_filename(target)
-                if resume_directory is not None
-                else output_path(target, batch_output_directory)
-            )
+            else output_path(target, output_directory, batch_timestamp)
         )
         logging.info(
             "backup planned index=%d/%d engine=%s connection=%s database=%s output=%s",
@@ -815,7 +814,7 @@ def run_backups(args: argparse.Namespace) -> int:
             target.engine,
             target.connection,
             target.database,
-            destination.name,
+            display_path(destination),
         )
         if not target.enabled:
             logging.info(
@@ -843,7 +842,7 @@ def run_backups(args: argparse.Namespace) -> int:
                 target.engine,
                 target.database,
                 artifact.size_bytes,
-                artifact.destination.name,
+                display_path(artifact.destination),
             )
             continue
 
@@ -858,6 +857,7 @@ def run_backups(args: argparse.Namespace) -> int:
         try:
             if args.continue_on_error:
                 require_dsns((target,))
+            destination.parent.mkdir(parents=True, exist_ok=True)
             started_at = time.perf_counter()
             run_dump(settings, target, destination)
             duration_seconds = time.perf_counter() - started_at
@@ -894,9 +894,8 @@ def run_backups(args: argparse.Namespace) -> int:
     manifest = write_manifest(
         args.config.expanduser().resolve(),
         results,
-        batch_output_directory,
+        output_directory,
         batch_timestamp,
-        replace_existing=resume_directory is not None,
     )
     successful_backups = sum(isinstance(result, BackupArtifact) for result in results)
     failed_backups = len(results) - successful_backups
