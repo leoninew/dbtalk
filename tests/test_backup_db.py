@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -72,6 +74,174 @@ def _postgres_dump_target() -> Any:
         dsn="postgresql+psycopg://user:password@postgres.example/app",
         enabled=True,
     )
+
+
+def _backup_run_config(output_directory: Path) -> Any:
+    postgres = _postgres_dump_target()
+    return backup_db.BackupConfig(
+        output_directory=output_directory,
+        target_validation_connection_timeout_seconds=10,
+        connections=(),
+        targets=(
+            postgres,
+            replace(postgres, connection_name="replica_postgres"),
+            replace(
+                postgres,
+                engine="mysql",
+                connection_name="primary_mysql",
+                dsn="mysql+pymysql://user:password@mysql.example/app",
+            ),
+            replace(postgres, database="disabled", enabled=False),
+        ),
+    )
+
+
+def test_backups_group_databases_and_preserve_previous_runs_in_the_same_second(
+    tmp_path: Path,
+) -> None:
+    output_directory = tmp_path / "backups"
+    config = _backup_run_config(output_directory)
+    args = backup_db.build_parser().parse_args(["backup"])
+
+    def dump(settings: Settings, target: Any, destination: Path) -> None:
+        destination.write_bytes(target.connection_name.encode())
+
+    with (
+        patch.object(backup_db, "load_backup_config", return_value=config),
+        patch.object(backup_db, "load_backup_settings", return_value=_settings()),
+        patch.object(backup_db, "datetime") as clock,
+        patch.object(backup_db, "run_dump", side_effect=dump) as run_dump,
+    ):
+        clock.now.return_value = datetime(2026, 10, 1, 15, 0, 0)
+        assert backup_db.run_backups(args) == 0
+        assert backup_db.run_backups(args) == 0
+
+    assert run_dump.call_count == 6
+    for timestamp in ("20261001-150000", "20261001-150000-01"):
+        assert (
+            output_directory / "primary_postgres_app" / f"{timestamp}.dump"
+        ).read_bytes() == b"primary_postgres"
+        assert (
+            output_directory / "replica_postgres_app" / f"{timestamp}.dump"
+        ).read_bytes() == b"replica_postgres"
+        assert (
+            output_directory / "primary_mysql_app" / f"{timestamp}.sql.gz"
+        ).read_bytes() == b"primary_mysql"
+        manifest_path = output_directory / "manifests" / f"{timestamp}.md"
+        manifest = manifest_path.read_text(encoding="utf-8")
+        assert f"`../primary_postgres_app/{timestamp}.dump`" in manifest
+        assert f"`../primary_mysql_app/{timestamp}.sql.gz`" in manifest
+        assert "Successful backups: `3`" in manifest
+        assert "password" not in manifest
+    assert {path.name for path in output_directory.iterdir()} == {
+        "primary_postgres_app",
+        "replica_postgres_app",
+        "primary_mysql_app",
+        "manifests",
+    }
+
+
+def test_resume_reuses_non_empty_backups_and_retries_empty_or_missing_files(
+    tmp_path: Path,
+) -> None:
+    config = _backup_run_config(tmp_path)
+    postgres_backup = tmp_path / "primary_postgres_app" / "20261001-150000.dump"
+    postgres_backup.parent.mkdir()
+    postgres_backup.write_bytes(b"existing archive")
+    mysql_backup = tmp_path / "primary_mysql_app" / "20261001-150000.sql.gz"
+    mysql_backup.parent.mkdir()
+    mysql_backup.touch()
+    manifest_path = tmp_path / "manifests" / "20261001-150000.md"
+    manifest_path.parent.mkdir()
+    manifest_path.write_text("previous manifest", encoding="utf-8")
+    args = backup_db.build_parser().parse_args(["backup", "--resume", "20261001-150000"])
+
+    def dump(settings: Settings, target: Any, destination: Path) -> None:
+        destination.write_bytes(b"new archive")
+
+    with (
+        patch.object(backup_db, "load_backup_config", return_value=config),
+        patch.object(backup_db, "load_backup_settings", return_value=_settings()),
+        patch.object(backup_db, "run_dump", side_effect=dump) as run_dump,
+    ):
+        assert backup_db.run_backups(args) == 0
+
+    assert run_dump.call_count == 2
+    assert postgres_backup.read_bytes() == b"existing archive"
+    assert mysql_backup.read_bytes() == b"new archive"
+    assert (tmp_path / "replica_postgres_app" / "20261001-150000.dump").read_bytes() == (
+        b"new archive"
+    )
+    manifest = manifest_path.read_text(encoding="utf-8")
+    assert "| `app` | Reused | `../primary_postgres_app/20261001-150000.dump`" in manifest
+    assert "| `app` | Succeeded | `../primary_mysql_app/20261001-150000.sql.gz`" in manifest
+    assert "Successful backups: `3`" in manifest
+    assert list(manifest_path.parent.iterdir()) == [manifest_path]
+
+
+def test_continue_on_error_writes_the_manifest_and_remaining_database_backups(
+    tmp_path: Path,
+) -> None:
+    config = _backup_run_config(tmp_path)
+    args = backup_db.build_parser().parse_args(["backup", "--continue-on-error"])
+
+    def dump(settings: Settings, target: Any, destination: Path) -> None:
+        if target.connection_name == "primary_postgres":
+            raise backup_db.BackupError("unreachable")
+        destination.write_bytes(b"archive")
+
+    with (
+        patch.object(backup_db, "load_backup_config", return_value=config),
+        patch.object(backup_db, "load_backup_settings", return_value=_settings()),
+        patch.object(backup_db, "datetime") as clock,
+        patch.object(backup_db, "run_dump", side_effect=dump),
+    ):
+        clock.now.return_value = datetime(2026, 10, 1, 15, 0, 0)
+        assert backup_db.run_backups(args) == 1
+
+    assert (tmp_path / "replica_postgres_app" / "20261001-150000.dump").is_file()
+    assert (tmp_path / "primary_mysql_app" / "20261001-150000.sql.gz").is_file()
+    manifest = (tmp_path / "manifests" / "20261001-150000.md").read_text(encoding="utf-8")
+    assert "| `app` | Failed |" in manifest
+    assert "`unreachable`" in manifest
+    assert "Successful backups: `2`" in manifest
+    assert "Failed backups: `1`" in manifest
+
+
+def test_a_new_run_preserves_backups_left_by_an_interrupted_run(tmp_path: Path) -> None:
+    config = _backup_run_config(tmp_path)
+    args = backup_db.build_parser().parse_args(["backup"])
+
+    def interrupted_dump(settings: Settings, target: Any, destination: Path) -> None:
+        if target.connection_name == "replica_postgres":
+            raise backup_db.BackupError("interrupted")
+        destination.write_bytes(b"original archive")
+
+    def completed_dump(settings: Settings, target: Any, destination: Path) -> None:
+        destination.write_bytes(b"next archive")
+
+    with (
+        patch.object(backup_db, "load_backup_config", return_value=config),
+        patch.object(backup_db, "load_backup_settings", return_value=_settings()),
+        patch.object(backup_db, "datetime") as clock,
+    ):
+        clock.now.return_value = datetime(2026, 10, 1, 15, 0, 0)
+        with (
+            patch.object(backup_db, "run_dump", side_effect=interrupted_dump),
+            pytest.raises(backup_db.BackupError, match="interrupted"),
+        ):
+            backup_db.run_backups(args)
+        assert not (tmp_path / "manifests").exists()
+        with patch.object(backup_db, "run_dump", side_effect=completed_dump):
+            assert backup_db.run_backups(args) == 0
+
+    assert (tmp_path / "primary_postgres_app" / "20261001-150000.dump").read_bytes() == (
+        b"original archive"
+    )
+    assert (tmp_path / "primary_postgres_app" / "20261001-150000-01.dump").read_bytes() == (
+        b"next archive"
+    )
+    assert (tmp_path / "manifests" / "20261001-150000-01.md").is_file()
 
 
 def test_run_dump_uses_the_postgres_package_api(tmp_path: Path) -> None:

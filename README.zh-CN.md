@@ -109,6 +109,7 @@ postgresql+psycopg://user:password@host:5432/app
 - [数据库操作](docs/database.md)：SQL、JSONL 导入导出和 DSN 约定
 - [MySQL 手册](docs/mysql.md)：schema、用户、权限、dump 和 restore
 - [PostgreSQL 手册](docs/postgres.md)：schema、role、权限、dump 和 restore
+- [批量备份](docs/backup.md)：备份配置、按数据库组织目录和续跑
 
 ## Agent 集成
 
