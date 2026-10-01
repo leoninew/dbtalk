@@ -114,7 +114,11 @@ def dump_command(
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     help="PostgreSQL custom archive input path.",
 )
-@click.option("--clean", is_flag=True, help="Drop target objects before restoring them.")
+@click.option(
+    "--clean",
+    is_flag=True,
+    help="Remove all user objects from the target database before restoring the archive.",
+)
 @click.option(
     "--if-exists",
     is_flag=True,

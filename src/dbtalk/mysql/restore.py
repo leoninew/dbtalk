@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 import re
@@ -11,7 +12,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import click
@@ -36,6 +37,23 @@ from .client import (
 MYSQL_USE_STATEMENT = re.compile(
     rb"^\s*USE\s+(?:`(?:``|[^`])+`|[A-Za-z0-9_$]+)\s*;\s*$", re.IGNORECASE
 )
+MYSQL_CLEAN_OBJECTS_SQL = """
+SELECT JSON_OBJECT('kind', object_kind, 'name', object_name)
+FROM (
+    SELECT 'EVENT' AS object_kind, EVENT_NAME AS object_name, 1 AS drop_order
+    FROM information_schema.EVENTS WHERE EVENT_SCHEMA = DATABASE()
+    UNION ALL
+    SELECT ROUTINE_TYPE, ROUTINE_NAME, 2
+    FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = DATABASE()
+    UNION ALL
+    SELECT 'VIEW', TABLE_NAME, 3
+    FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'VIEW'
+    UNION ALL
+    SELECT 'TABLE', TABLE_NAME, 4
+    FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'
+) AS objects
+ORDER BY drop_order, object_name
+"""
 logger = logging.getLogger("dbtalk")
 ProgressCallback = Callable[[int], None]
 
@@ -188,6 +206,7 @@ class MysqlRestoreOptions:
     input: Path
     database: str | None = None
     client_image: str = ""
+    clean: bool = False
 
 
 @dataclass(frozen=True)
@@ -199,6 +218,7 @@ class MysqlRestoreOverrides:
     input: Path
     target_database: str | None
     dsn_database: str | None
+    clean: bool = False
 
 
 def mysql_restore_command_args(options: MysqlRestoreOptions) -> list[str]:
@@ -258,6 +278,7 @@ def resolve_restore_options(
         input=overrides.input,
         database=database,
         client_image=config.client_image,
+        clean=overrides.clean,
     )
 
 
@@ -268,6 +289,13 @@ def restore_database(options: MysqlRestoreOptions) -> Path:
         raise click.ClickException(f"SQL dump input file does not exist: {input_path}")
     if not options.database:
         raise click.ClickException("Restore target database is required")
+    if options.clean and options.database.lower() in {
+        "mysql",
+        "information_schema",
+        "performance_schema",
+        "sys",
+    }:
+        raise click.ClickException("--clean cannot be used with a MySQL system database")
 
     started_at = time.monotonic()
     stage = "prepare"
@@ -307,6 +335,9 @@ def restore_database(options: MysqlRestoreOptions) -> Path:
             container_id = docker_mapped_mysql_container(options.host, options.port)
             if container_id is not None:
                 verify_target_database_with_mapped_container(options, container_id)
+                if options.clean:
+                    stage = "clean"
+                    _clean_target_database(options, container_id=container_id)
                 stage = "restore"
                 restore_with_mapped_container(
                     options,
@@ -316,6 +347,9 @@ def restore_database(options: MysqlRestoreOptions) -> Path:
                 )
             elif shutil.which("mysql") is not None:
                 verify_target_database_with_local_client(options)
+                if options.clean:
+                    stage = "clean"
+                    _clean_target_database(options)
                 stage = "restore"
                 restore_with_local_client(options, restore_input, progress_callback=report_progress)
             else:
@@ -323,6 +357,9 @@ def restore_database(options: MysqlRestoreOptions) -> Path:
                 if image is None:
                     raise click.ClickException(f"mysql is not available. {reason}")
                 verify_target_database_with_docker(options, image)
+                if options.clean:
+                    stage = "clean"
+                    _clean_target_database(options, image=image)
                 stage = "restore"
                 restore_with_docker(
                     options,
@@ -422,6 +459,69 @@ def restore_with_local_client(
         progress_callback=progress_callback,
     )
     ensure_command_succeeded(result, "mysql restore")
+
+
+def _clean_target_database(
+    options: MysqlRestoreOptions,
+    *,
+    container_id: str | None = None,
+    image: str | None = None,
+) -> None:
+    assert options.database is not None
+    environment = mysql_password_environment(options.password)
+    if container_id is not None:
+        command = [
+            "docker",
+            "exec",
+            "-i",
+            "--env",
+            "MYSQL_PWD",
+            container_id,
+            *mysql_restore_command_args(options),
+        ]
+    elif image is not None:
+        container_options = replace(options, host=docker_database_host(options.host))
+        command = [
+            "docker",
+            "run",
+            "--rm",
+            "-i",
+            *docker_host_gateway_args(options.host),
+            "--env",
+            "MYSQL_PWD",
+            "--entrypoint",
+            "mysql",
+            image,
+            *mysql_restore_command_args(container_options)[1:],
+        ]
+    else:
+        command = mysql_restore_command_args(options)
+    result = run_command(
+        [*command, "--batch", "--raw", "--skip-column-names", "--execute", MYSQL_CLEAN_OBJECTS_SQL],
+        environment,
+    )
+    ensure_command_succeeded(result, "MySQL target object listing")
+    statements = ["SET FOREIGN_KEY_CHECKS=0;"]
+    quoted_database = options.database.replace("`", "``")
+    try:
+        for line in result.stdout.splitlines():
+            item = json.loads(line)
+            kind, name = item["kind"], item["name"]
+            if kind not in {"TABLE", "VIEW", "FUNCTION", "PROCEDURE", "EVENT"} or not isinstance(
+                name, str
+            ):
+                raise ValueError("invalid database object")
+            quoted_name = name.replace("`", "``")
+            statements.append(f"DROP {kind} `{quoted_database}`.`{quoted_name}`;")
+    except (ValueError, KeyError, TypeError) as error:
+        raise click.ClickException("Could not read MySQL target object listing") from error
+    statements.append("SET FOREIGN_KEY_CHECKS=1;")
+    with tempfile.TemporaryDirectory(prefix="dbtalk-mysql-clean-") as temporary_directory:
+        cleanup_input = Path(temporary_directory) / "clean.sql"
+        cleanup_input.write_text("\n".join(statements) + "\n", encoding="utf-8")
+        ensure_command_succeeded(
+            run_command(command, environment, input_path=cleanup_input), "MySQL target cleanup"
+        )
 
 
 def restore_with_mapped_container(

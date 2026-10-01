@@ -61,7 +61,7 @@ restore 会修改目标数据库。只有 target database、输入 archive 来�
 dbtalk postgres restore --dsn-env DBTALK_DSN_APP --database app --input ./data/app.dump
 ```
 
-目标数据库必须已经存在。默认跳过 archive 中的 owner 和 ACL；需要保留时传入 `--preserve-owner`、`--preserve-privileges`。`--clean` 会删除目标对象，必须显式指定；`--if-exists` 只能与 `--clean` 一起使用。custom archive 可使用 `--jobs N` 并行恢复，`N` 必须为正整数。
+目标数据库必须已经存在。默认跳过 archive 中的 owner 和 ACL；需要保留时传入 `--preserve-owner`、`--preserve-privileges`。完整还原已有库时显式指定 `--clean`：先清空全部非系统 schema 和用户对象，包括备份中没有的表，再恢复 archive；标准 `public` schema 会重建，数据库本身和实例级账号、授权保留。dump 排除的旧表也会删除。清理用户 extension、事件触发器、用户 cast/access method、publication、subscription、外部数据包装器、自定义过程语言和 large object；订阅清理不连接远端回收 replication slot。执行账号必须具有全部目标对象的清理权限。本机 `--clean` 同时需要 `psql` 和 `pg_restore`；容器路径使用容器内客户端。`--if-exists` 只能与 `--clean` 一起使用，为清理阶段的 DROP 添加 `IF EXISTS`。custom archive 可使用 `--jobs N` 并行恢复，`N` 必须为正整数。
 
 restore 在写入前用 `pg_restore --list` 校验 archive。即使启用 fail-fast，restore 也不能整体回滚；完成后确认命令成功退出，并按需检查代表性对象和数据。
 

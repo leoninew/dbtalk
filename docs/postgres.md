@@ -108,7 +108,11 @@ uv run dbtalk postgres restore \
 
 默认恢复跳过 owner 与 ACL，以支持不同账号管理的环境。需要原样恢复时，显式传入 `--preserve-owner` 和/或 `--preserve-privileges`。`--jobs` 只接受正整数，适用于 custom archive。
 
-`--clean` 会删除 archive 将恢复的目标对象，默认关闭；`--if-exists` 只能与 `--clean` 同时使用。restore 并非整体原子操作，发生错误时目标数据库可能保留部分恢复状态。执行前必须确认目标 DSN、archive 来源和写入授权。
+`--clean` 默认关闭。显式启用时，在 archive 校验成功后，先清空目标库的所有非系统 schema 及其业务对象，包括 archive 中没有的表，再恢复 archive。清理使用 `CASCADE` 处理外键和其他依赖，同时移除用户 extension（保留 `plpgsql`）、事件触发器、用户 cast/access method、publication、subscription、外部数据包装器、自定义过程语言和 large object。清理订阅时先禁用并解除 replication slot 关联，不连接远端删除 slot；远端 slot 的回收由复制管理流程负责。标准 `public` schema 会按 PostgreSQL 18 的初始属性重建，以支持原生 archive 的恢复方式。目标数据库本身、系统 schema、实例级 role 和授权不会删除。
+
+本机路径的 `--clean` 需要同时安装 `psql` 和 `pg_restore`；映射容器和 Docker client 使用对应容器内的 `psql`。执行账号必须具有清理目标库全部用户对象及重建 schema 的权限。`--if-exists` 只能与 `--clean` 同时使用，为清理阶段的 DROP 添加 `IF EXISTS`；清理与导入不再透传原生 `pg_restore --clean`。
+
+PostgreSQL 清理阶段在一个事务内执行，清理失败时回滚并停止导入；整个 restore 并非整体原子操作，导入发生错误时目标数据库可能保留部分恢复状态。`--clean` 不会保留 dump 排除的旧表。执行前必须确认目标 DSN、archive 来源和写入授权。
 
 ## Scope
 

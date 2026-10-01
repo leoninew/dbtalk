@@ -148,6 +148,11 @@ def dump_command(  # noqa: PLR0913 - Click passes one argument for each CLI opti
     metavar="TARGET",
     help=("Existing database to receive the dump. Defaults to the DSN database."),
 )
+@click.option(
+    "--clean",
+    is_flag=True,
+    help="Remove all user objects from the target database before restoring the dump.",
+)
 @click.pass_context
 def restore_command(  # noqa: PLR0913 - Click passes one argument for each CLI option.
     ctx: click.Context,
@@ -155,6 +160,7 @@ def restore_command(  # noqa: PLR0913 - Click passes one argument for each CLI o
     dsn_env: str | None,
     input: Path,
     target_database: str | None,
+    clean: bool,
 ) -> None:
     """Import a MySQL dump."""
     settings = context_settings(ctx)
@@ -169,6 +175,7 @@ def restore_command(  # noqa: PLR0913 - Click passes one argument for each CLI o
             input=input,
             target_database=target_database,
             dsn_database=dsn_database,
+            clean=clean,
         ),
     )
     restored_input = restore_database(options)

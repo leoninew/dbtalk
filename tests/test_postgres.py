@@ -396,8 +396,6 @@ def test_pg_restore_command_defaults_to_portable_restore_options() -> None:
         "--dbname",
         "postgresql://backup@db.example.test:5433/app?sslmode=require",
         "--exit-on-error",
-        "--clean",
-        "--if-exists",
         "--no-owner",
         "--no-privileges",
         "--jobs",
@@ -527,7 +525,10 @@ def test_docker_mapped_postgres_container_requires_one_local_running_container()
     assert run.call_args.args[0][-1] == "publish=5432"
 
 
-def test_restore_reports_an_invalid_custom_archive_before_writing(tmp_path: Path) -> None:
+@pytest.mark.parametrize("clean", [False, True])
+def test_restore_reports_an_invalid_custom_archive_before_writing(
+    tmp_path: Path, clean: bool
+) -> None:
     input_path = tmp_path / "backup.dump"
     input_path.write_bytes(b"not-an-archive")
 
@@ -539,7 +540,7 @@ def test_restore_reports_an_invalid_custom_archive_before_writing(tmp_path: Path
         ),
         pytest.raises(click.ClickException, match="archive validation failed"),
     ):
-        restore_database(restore_options(input_path))
+        restore_database(replace(restore_options(input_path), clean=clean))
 
 
 def test_command_failure_includes_non_sensitive_client_diagnostic() -> None:
