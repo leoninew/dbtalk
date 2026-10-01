@@ -70,6 +70,8 @@ dbtalk mysql restore --dsn-env DBTALK_DSN_APP --database app --input ./data/app-
 
 restore 会覆盖或删除 dump 中同名表及数据，不能整体回滚。完成后确认命令成功退出，并按需检查目标表数或代表性数据。dump/restore 的 stderr 生命周期日志包含阶段、`elapsed_ms` 和字节数；stdout 只输出最终路径或结果摘要。
 
+完整还原已有目标库时显式指定 `--clean`：先关闭清理会话的外键检查，删除目标库的全部表、视图、存储函数、存储过程和事件，再导入备份。备份之外的对象及 dump 排除的旧表也会删除；数据库本身、账号和授权保留。禁止对 MySQL 系统库使用该选项，执行账号必须具有目标库对象管理权限。输入预检、对象枚举或清理失败时停止导入；MySQL 清理和恢复不能整体回滚。未指定 `--clean` 时保留原生 dump 导入行为。
+
 当 DSN 指向本机且请求端口唯一对应一个运行中的 Docker 容器时，restore 的目标库预检和实际导入都在该容器内通过 `docker exec` 使用默认 Unix socket；只有未识别到唯一映射容器时，才使用宿主机 `mysql` 或临时 Docker client fallback。
 
 ## 运行路径与故障处理

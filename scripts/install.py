@@ -301,9 +301,14 @@ class CommandRunner:
                 f"{target.name} CLI timed out while running plugin command"
             ) from error
         if completed.returncode != 0:
-            raise SyncError(
-                f"{target.name} CLI failed while running {' '.join(arguments)}"
-            )
+            details = [
+                f"{target.name} CLI failed while running {' '.join(arguments)} "
+                f"(exit code {completed.returncode})"
+            ]
+            for stream, output in (("stderr", completed.stderr), ("stdout", completed.stdout)):
+                if output and output.strip():
+                    details.append(f"{stream}: {output.strip()}")
+            raise SyncError("\n".join(details))
         return completed
 
 

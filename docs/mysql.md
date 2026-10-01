@@ -97,8 +97,13 @@ uv run dbtalk mysql restore \
 | `--dsn DSN` / `--dsn-env NAME` | 必须二选一的 MySQL DSN。 |
 | `--database TARGET` | 已存在的恢复目标库；优先于 DSN database。 |
 | `--input FILE` | 必填的 SQL 或 gzip 压缩 SQL 输入文件。 |
+| `--clean` | 先清空目标库的所有表、视图、存储函数、存储过程和事件，再导入备份。默认关闭。 |
 
 restore 的目标按 `--database > DSN database > 失败` 决定。目标库必须在 restore 前由独立的 `dbtalk mysql schema create` 或其他明确流程创建。restore 会先检查目标库存在，再拒绝输入中的 `CREATE DATABASE` 或 `DROP DATABASE`，并只将顶层 `USE` 重写为目标库；不会修改原始输入文件。restore 可能覆盖或删除现有数据，执行前确认目标连接、输入来源和写入授权。
+
+完整还原已有目标库时显式添加 `--clean`。输入预检和目标库探测成功后，restore 枚举目标库当前对象，并在同一个清理会话中关闭 `FOREIGN_KEY_CHECKS`，删除全部表、视图、存储程序和事件（表上的触发器随表删除），包括备份中没有的对象；随后导入备份中的定义和数据。目标数据库本身的属性、账号和授权保留，禁止对 MySQL 系统库使用 `--clean`。未指定该选项时，仍按原生 SQL dump 导入，备份之外的旧对象可能保留。
+
+清理与导入都要求执行账号具有相应的目标库对象管理权限；对象枚举或清理失败时停止导入。MySQL DDL 无法整体回滚，清理或导入失败时目标库可能处于部分清理或恢复状态。`--clean` 不会保留 dump 排除的旧表。
 
 dump 和 restore 会在 stderr 输出 `started`、`progress`、`completed` 和 `failed` 生命周期日志，包含阶段、耗时和可测量字节数；stdout 只输出最终路径或结果摘要。日志和错误不会输出密码、完整含密码 DSN 或 SQL 内容。
 
