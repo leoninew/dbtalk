@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 import sys
 from dataclasses import replace
 from datetime import datetime
@@ -97,7 +98,7 @@ def _backup_run_config(output_directory: Path) -> Any:
 
 
 def test_backups_group_databases_and_preserve_previous_runs_in_the_same_second(
-    tmp_path: Path,
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     output_directory = tmp_path / "backups"
     config = _backup_run_config(output_directory)
@@ -111,12 +112,16 @@ def test_backups_group_databases_and_preserve_previous_runs_in_the_same_second(
         patch.object(backup_db, "load_backup_settings", return_value=_settings()),
         patch.object(backup_db, "datetime") as clock,
         patch.object(backup_db, "run_dump", side_effect=dump) as run_dump,
+        caplog.at_level(logging.INFO),
     ):
         clock.now.return_value = datetime(2026, 10, 1, 15, 0, 0)
         assert backup_db.run_backups(args) == 0
         assert backup_db.run_backups(args) == 0
 
     assert run_dump.call_count == 6
+    assert (
+        caplog.messages.count("backup run completed targets=4 succeeded=3 failed=0 skipped=1") == 2
+    )
     for timestamp in ("20261001-150000", "20261001-150000-01"):
         assert (
             output_directory / "primary_postgres_app" / f"{timestamp}.dump"
@@ -142,7 +147,7 @@ def test_backups_group_databases_and_preserve_previous_runs_in_the_same_second(
 
 
 def test_resume_reuses_non_empty_backups_and_retries_empty_or_missing_files(
-    tmp_path: Path,
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     config = _backup_run_config(tmp_path)
     postgres_backup = tmp_path / "primary_postgres_app" / "20261001-150000.dump"
@@ -163,10 +168,12 @@ def test_resume_reuses_non_empty_backups_and_retries_empty_or_missing_files(
         patch.object(backup_db, "load_backup_config", return_value=config),
         patch.object(backup_db, "load_backup_settings", return_value=_settings()),
         patch.object(backup_db, "run_dump", side_effect=dump) as run_dump,
+        caplog.at_level(logging.INFO),
     ):
         assert backup_db.run_backups(args) == 0
 
     assert run_dump.call_count == 2
+    assert "backup run completed targets=4 succeeded=3 failed=0 skipped=1" in caplog.messages
     assert postgres_backup.read_bytes() == b"existing archive"
     assert mysql_backup.read_bytes() == b"new archive"
     assert (tmp_path / "replica_postgres_app" / "20261001-150000.dump").read_bytes() == (
@@ -180,7 +187,7 @@ def test_resume_reuses_non_empty_backups_and_retries_empty_or_missing_files(
 
 
 def test_continue_on_error_writes_the_manifest_and_remaining_database_backups(
-    tmp_path: Path,
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     config = _backup_run_config(tmp_path)
     args = backup_db.build_parser().parse_args(["backup", "--continue-on-error"])
@@ -195,10 +202,12 @@ def test_continue_on_error_writes_the_manifest_and_remaining_database_backups(
         patch.object(backup_db, "load_backup_settings", return_value=_settings()),
         patch.object(backup_db, "datetime") as clock,
         patch.object(backup_db, "run_dump", side_effect=dump),
+        caplog.at_level(logging.INFO),
     ):
         clock.now.return_value = datetime(2026, 10, 1, 15, 0, 0)
         assert backup_db.run_backups(args) == 1
 
+    assert "backup run completed targets=4 succeeded=2 failed=1 skipped=1" in caplog.messages
     assert (tmp_path / "replica_postgres_app" / "20261001-150000.dump").is_file()
     assert (tmp_path / "primary_mysql_app" / "20261001-150000.sql.gz").is_file()
     manifest = (tmp_path / "manifests" / "20261001-150000.md").read_text(encoding="utf-8")
@@ -304,11 +313,13 @@ def test_load_backup_config_builds_each_target_dsn_from_its_connection(tmp_path:
         "  connection_timeout_seconds: 10\n"
         "connections:\n"
         "  - name: primary_mysql\n"
+        "    enabled: true\n"
         "    dsn: 'mysql+pymysql://user:password@mysql.example:3307/'\n"
         "    databases:\n"
         "      - name: app\n"
         "        enabled: true\n"
         "  - name: primary_postgres\n"
+        "    enabled: true\n"
         "    dsn: 'postgresql+psycopg://user:password@postgres.example/'\n"
         "    databases:\n"
         "      - name: audit\n"
@@ -342,10 +353,12 @@ def test_load_backup_config_builds_each_target_dsn_from_its_connection(tmp_path:
         backup_db.BackupConnection(
             name="primary_mysql",
             dsn="mysql+pymysql://user:password@mysql.example:3307/",
+            enabled=True,
         ),
         backup_db.BackupConnection(
             name="primary_postgres",
             dsn="postgresql+psycopg://user:password@postgres.example/",
+            enabled=True,
         ),
     )
 
@@ -358,6 +371,7 @@ def test_load_backup_config_reads_exclude_tables(tmp_path: Path) -> None:
         "  connection_timeout_seconds: 10\n"
         "connections:\n"
         "  - name: primary_postgres\n"
+        "    enabled: true\n"
         "    dsn: 'postgresql+psycopg://user:password@postgres.example/'\n"
         "    databases:\n"
         "      - name: app\n"
@@ -381,6 +395,7 @@ def test_load_backup_config_rejects_blank_exclude_tables(tmp_path: Path) -> None
         "  connection_timeout_seconds: 10\n"
         "connections:\n"
         "  - name: primary_postgres\n"
+        "    enabled: true\n"
         "    dsn: 'postgresql+psycopg://user:password@postgres.example/'\n"
         "    databases:\n"
         "      - name: app\n"
@@ -431,6 +446,7 @@ def test_run_tests_runs_once_per_connection_with_its_base_dsn(tmp_path: Path) ->
         "  connection_timeout_seconds: 10\n"
         "connections:\n"
         "  - name: primary_mysql\n"
+        "    enabled: true\n"
         "    dsn: 'mysql+pymysql://user:password@mysql.example:3307/'\n"
         "    databases:\n"
         "      - name: app\n"
@@ -438,6 +454,7 @@ def test_run_tests_runs_once_per_connection_with_its_base_dsn(tmp_path: Path) ->
         "      - name: archive\n"
         "        enabled: false\n"
         "  - name: primary_postgres\n"
+        "    enabled: true\n"
         "    dsn: 'postgresql+psycopg://user:password@postgres.example/'\n"
         "    databases:\n"
         "      - name: audit\n"
@@ -468,6 +485,7 @@ def test_load_backup_config_rejects_a_connection_dsn_with_a_database(tmp_path: P
         "  connection_timeout_seconds: 10\n"
         "connections:\n"
         "  - name: primary_mysql\n"
+        "    enabled: true\n"
         "    dsn: 'mysql+pymysql://user:password@mysql.example:3307/app'\n"
         "    databases:\n"
         "      - name: app\n"
@@ -493,6 +511,7 @@ def test_list_connection_databases_uses_the_engine_specific_catalog() -> None:
     connection = backup_db.BackupConnection(
         name="primary_mysql",
         dsn="mysql+pymysql://user:password@mysql.example:3307/",
+        enabled=True,
     )
 
     with patch.object(backup_db, "list_mysql_databases", return_value=("app", "mysql")) as list_db:
@@ -508,6 +527,7 @@ def _sync_config() -> str:
         "  connection_timeout_seconds: 10\n"
         "connections:\n"
         "  - name: primary_mysql\n"
+        "    enabled: true\n"
         "    dsn: 'mysql+pymysql://user:password@mysql.example:3307/'\n"
         "    databases:\n"
         "      - name: retained\n"
@@ -517,6 +537,7 @@ def _sync_config() -> str:
         "      - name: stale\n"
         "        enabled: true\n"
         "  - name: primary_postgres\n"
+        "    enabled: true\n"
         "    dsn: 'postgresql+psycopg://user:password@postgres.example/'\n"
         "    databases:\n"
         "      - name: audit\n"
@@ -524,6 +545,97 @@ def _sync_config() -> str:
         "      - name: stale_postgres\n"
         "        enabled: true\n"
     )
+
+
+@pytest.mark.parametrize("command", ["backup", "test", "sync"])
+@pytest.mark.parametrize("connection_enabled", [False, None])
+def test_commands_skip_connections_that_are_not_enabled(
+    tmp_path: Path, command: str, connection_enabled: bool | None
+) -> None:
+    config_path = tmp_path / "backup-db.yaml"
+    config = yaml.safe_load(_sync_config())
+    disabled_connection = config["connections"][1]
+    if connection_enabled is None:
+        del disabled_connection["enabled"]
+    else:
+        disabled_connection["enabled"] = connection_enabled
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    loaded = backup_db.load_backup_config(config_path)
+    assert loaded.connections[0].enabled is True
+    assert loaded.connections[1].enabled is False
+    assert [target.database for target in loaded.targets if target.enabled] == ["stale"]
+    args = backup_db.build_parser().parse_args([command])
+    args.config = config_path
+
+    def dump(settings: Settings, target: Any, destination: Path) -> None:
+        destination.write_bytes(b"archive")
+
+    runner = {
+        "backup": backup_db.run_backups,
+        "test": backup_db.run_tests,
+        "sync": backup_db.run_sync,
+    }[command]
+    with (
+        patch.object(backup_db, "load_backup_settings", return_value=_settings()),
+        patch.object(backup_db, "run_dump", side_effect=dump) as run_dump,
+        patch.object(backup_db, "run_connection_test", return_value=True) as run_test,
+        patch.object(
+            backup_db,
+            "list_connection_databases",
+            return_value=("retained", "stale", "new_mysql"),
+        ) as list_databases,
+    ):
+        assert runner(args) == 0
+
+    assert run_dump.call_count + run_test.call_count + list_databases.call_count == 1
+    if command == "backup":
+        assert run_dump.call_args.args[1].connection_name == "primary_mysql"
+        assert {path.name for path in loaded.output_directory.iterdir()} == {
+            "primary_mysql_stale",
+            "manifests",
+        }
+    elif command == "test":
+        run_test.assert_called_once_with(_settings(), loaded.connections[0].dsn, 10)
+    else:
+        list_databases.assert_called_once_with(loaded.connections[0], "mysql")
+        synchronized = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        assert synchronized["connections"][1] == disabled_connection
+        assert synchronized["connections"][0]["databases"][-1] == {
+            "name": "new_mysql",
+            "enabled": True,
+        }
+
+
+@pytest.mark.parametrize("command", ["backup", "test", "sync"])
+def test_commands_succeed_without_database_operations_when_all_connections_are_disabled(
+    tmp_path: Path, command: str
+) -> None:
+    config_path = tmp_path / "backup-db.yaml"
+    config = yaml.safe_load(_sync_config())
+    for connection in config["connections"]:
+        connection["enabled"] = False
+    original = yaml.safe_dump(config)
+    config_path.write_text(original, encoding="utf-8")
+    args = backup_db.build_parser().parse_args([command])
+    args.config = config_path
+    runner = {
+        "backup": backup_db.run_backups,
+        "test": backup_db.run_tests,
+        "sync": backup_db.run_sync,
+    }[command]
+    with (
+        patch.object(backup_db, "load_backup_settings") as settings,
+        patch.object(backup_db, "run_dump") as run_dump,
+        patch.object(backup_db, "run_connection_test") as run_test,
+        patch.object(backup_db, "list_connection_databases") as list_databases,
+    ):
+        assert runner(args) == 0
+
+    settings.assert_not_called()
+    run_dump.assert_not_called()
+    run_test.assert_not_called()
+    list_databases.assert_not_called()
+    assert config_path.read_text(encoding="utf-8") == original
 
 
 def test_run_sync_adds_enabled_databases_removes_stale_entries_and_is_idempotent(

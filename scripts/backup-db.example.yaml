@@ -6,6 +6,7 @@ target_validation:
 
 connections:
   - name: example
+    enabled: true
     dsn: "mysql+pymysql://<user>:<password>@<host>:3306/"
     databases:
       - name: "<database>"

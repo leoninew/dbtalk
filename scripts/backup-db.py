@@ -76,6 +76,7 @@ class BackupTarget:
 class BackupConnection:
     name: str
     dsn: str
+    enabled: bool
 
 
 @dataclass(frozen=True)
@@ -335,6 +336,7 @@ def load_backup_config(config_path: Path) -> BackupConfig:
         connection_context = f"config.connections[{connection_index}]"
         connection_config = _mapping(raw_connection, connection_context)
         connection_name = _required_string(connection_config, "name", connection_context)
+        connection_enabled = _parse_enabled(connection_config, connection_context)
         connection_url = _connection_url(connection_config, connection_context)
         engine = _connection_engine(connection_url, connection_context)
         address = _connection_address(connection_url)
@@ -342,6 +344,7 @@ def load_backup_config(config_path: Path) -> BackupConfig:
             BackupConnection(
                 name=connection_name,
                 dsn=connection_url.render_as_string(hide_password=False),
+                enabled=connection_enabled,
             )
         )
         raw_databases = connection_config.get("databases")
@@ -359,7 +362,8 @@ def load_backup_config(config_path: Path) -> BackupConfig:
                     connection_name=connection_name,
                     database=database,
                     dsn=_target_dsn(connection_url, database),
-                    enabled=_parse_enabled(database_config, database_context),
+                    enabled=_parse_enabled(database_config, database_context)
+                    and connection_enabled,
                     exclude_tables=_exclude_tables(database_config, database_context),
                 )
             )
@@ -716,6 +720,11 @@ def run_sync(args: argparse.Namespace) -> int:
     for index, (connection, raw_connection) in enumerate(
         zip(backup_config.connections, raw_connections, strict=True), 1
     ):
+        if not connection.enabled:
+            logging.info(
+                "sync skipped connection=%s enabled=%s", connection.name, connection.enabled
+            )
+            continue
         engine = engines_by_connection.get(connection.name)
         if engine is None:
             raise BackupError(f"no database engine found for connection={connection.name}")
@@ -797,6 +806,16 @@ def run_backups(args: argparse.Namespace) -> int:
 
     results: list[BackupArtifact | BackupFailure] = []
     for index, target in enumerate(backup_config.targets, 1):
+        if not target.enabled:
+            logging.info(
+                "backup skipped index=%d/%d connection=%s database=%s enabled=%s",
+                index,
+                total,
+                target.connection_name,
+                target.database,
+                target.enabled,
+            )
+            continue
         reusable_backup = (
             reusable_backup_path(target, output_directory, batch_timestamp)
             if resume_timestamp is not None
@@ -816,17 +835,6 @@ def run_backups(args: argparse.Namespace) -> int:
             target.database,
             display_path(destination),
         )
-        if not target.enabled:
-            logging.info(
-                "backup skipped index=%d/%d connection=%s database=%s enabled=%s",
-                index,
-                total,
-                target.connection_name,
-                target.database,
-                target.enabled,
-            )
-            continue
-
         if reusable_backup is not None:
             artifact = BackupArtifact(
                 target=target,
@@ -899,19 +907,25 @@ def run_backups(args: argparse.Namespace) -> int:
     )
     successful_backups = sum(isinstance(result, BackupArtifact) for result in results)
     failed_backups = len(results) - successful_backups
+    skipped_backups = total - len(enabled_targets)
     logging.info("backup manifest written path=%s", manifest)
     logging.info(
-        "backup run completed targets=%d succeeded=%d failed=%d",
+        "backup run completed targets=%d succeeded=%d failed=%d skipped=%d",
         total,
         successful_backups,
         failed_backups,
+        skipped_backups,
     )
     return 0 if not any(isinstance(result, BackupFailure) for result in results) else 1
 
 
 def run_tests(args: argparse.Namespace) -> int:
     backup_config = load_backup_config(args.config)
-    settings = load_backup_settings()
+    settings = (
+        load_backup_settings()
+        if any(connection.enabled for connection in backup_config.connections)
+        else None
+    )
     connection_timeout_seconds = (
         args.connect_timeout_seconds
         if args.connect_timeout_seconds is not None
@@ -920,12 +934,23 @@ def run_tests(args: argparse.Namespace) -> int:
 
     total = len(backup_config.connections)
     passed = 0
+    skipped = 0
     logging.info(
         "connection test run started connections=%d connection_timeout_seconds=%d",
         total,
         connection_timeout_seconds,
     )
     for index, connection in enumerate(backup_config.connections, 1):
+        if not connection.enabled:
+            skipped += 1
+            logging.info(
+                "connection test skipped index=%d/%d connection=%s enabled=%s",
+                index,
+                total,
+                connection.name,
+                connection.enabled,
+            )
+            continue
         logging.info(
             "connection test started index=%d/%d connection=%s",
             index,
@@ -933,6 +958,7 @@ def run_tests(args: argparse.Namespace) -> int:
             connection.name,
         )
         started_at = time.perf_counter()
+        assert settings is not None
         succeeded = run_connection_test(settings, connection.dsn, connection_timeout_seconds)
         duration_seconds = time.perf_counter() - started_at
         if succeeded:
@@ -953,9 +979,13 @@ def run_tests(args: argparse.Namespace) -> int:
                 duration_seconds,
             )
 
-    failed = total - passed
+    failed = total - passed - skipped
     logging.info(
-        "connection test run completed connections=%d passed=%d failed=%d", total, passed, failed
+        "connection test run completed connections=%d passed=%d failed=%d skipped=%d",
+        total,
+        passed,
+        failed,
+        skipped,
     )
     return 0 if failed == 0 else 1
 
