@@ -33,6 +33,9 @@ from dbtalk.settings import DumpRestoreConfig
 
 
 class MysqlCommandTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.enterContext(CliRunner().isolated_filesystem())
+
     def test_mysqldump_args_uses_defaults_without_host_or_port(self) -> None:
         options = MysqlDumpOptions(
             host="localhost",

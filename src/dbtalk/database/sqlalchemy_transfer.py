@@ -5,12 +5,14 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 from datetime import timedelta
-from typing import Any
+from time import monotonic
+from typing import Any, Literal
 
 from sqlalchemy import inspect
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql import text
+from sqlalchemy.sql.elements import TextClause
 
 from .dsn import ParsedDsn, dsn_from_environment, parse_dsn
 from .format import (
@@ -44,6 +46,67 @@ from .schema import (
 
 logger = logging.getLogger("dbtalk")
 BATCH_SIZE = 1000
+BATCH_BYTE_BUDGET = 8 * 1024 * 1024
+PROGRESS_INTERVAL_SECONDS = 5.0
+
+
+class _TableProgress:
+    def __init__(
+        self,
+        operation: Literal["import", "export"],
+        parsed: ParsedDsn,
+        table: str,
+        total_rows: int | None,
+        committed_rows: int,
+    ) -> None:
+        self.operation = operation
+        self.dialect = parsed.dialect
+        self.table = table
+        self.total_rows = total_rows
+        self.committed_rows = committed_rows
+        self.rows = 0
+        self.started_at = monotonic()
+        self.last_report_at = self.started_at
+
+    def advance(self, rows: int) -> None:
+        self.rows += rows
+        now = monotonic()
+        if now - self.last_report_at >= PROGRESS_INTERVAL_SECONDS:
+            self._report(now, "pending" if self.operation == "import" else "writing")
+
+    def finish(self, status: str) -> None:
+        self._report(monotonic(), status)
+
+    def _report(self, now: float, status: str) -> None:
+        elapsed = now - self.started_at
+        rate = self.rows / elapsed if elapsed > 0 else 0.0
+        if self.operation == "import":
+            logger.info(
+                "database import progress dialect=%s table=%s executed_rows=%d total_rows=%s "
+                "pending_rows=%d committed_rows=%d rows_per_second=%.2f "
+                "elapsed_seconds=%.2f status=%s",
+                self.dialect,
+                self.table,
+                self.rows,
+                self.total_rows,
+                self.rows if status == "pending" else 0,
+                self.committed_rows + (self.rows if status == "committed" else 0),
+                rate,
+                elapsed,
+                status,
+            )
+        else:
+            logger.info(
+                "database export progress dialect=%s table=%s written_rows=%d total_rows=unknown "
+                "rows_per_second=%.2f elapsed_seconds=%.2f status=%s",
+                self.dialect,
+                self.table,
+                self.rows,
+                rate,
+                elapsed,
+                status,
+            )
+        self.last_report_at = now
 
 
 def export_sqlalchemy(options: ExportOptions) -> TransferSummary:
@@ -65,11 +128,22 @@ def export_sqlalchemy(options: ExportOptions) -> TransferSummary:
                 TransferHeader(TRANSFER_FORMAT, parsed.dialect),
             ) as writer:
                 for schema in _ordered_schemas(schemas):
-                    result = connection.exec_driver_sql(_select_sql(connection, schema))
-                    written = writer.write_table(
-                        TableBlockHeader(schema.name, schema.columns, schema.primary_key),
-                        _encoded_rows(result, schema, options, parsed),
-                    )
+                    header = TableBlockHeader(schema.name, schema.columns, schema.primary_key)
+                    if parsed.dialect == "mysql":
+                        result = connection.exec_driver_sql(_select_sql(connection, schema))
+                        written = writer.write_table(
+                            header, _encoded_rows(result, schema, options, parsed)
+                        )
+                    else:
+                        progress = _TableProgress("export", parsed, schema.name, None, 0)
+                        with connection.exec_driver_sql(
+                            _select_sql(connection, schema),
+                            execution_options={"yield_per": BATCH_SIZE, "stream_results": True},
+                        ) as result:
+                            written = writer.write_table(
+                                header, _encoded_rows(result, schema, options, parsed, progress)
+                            )
+                        progress.finish("table_completed")
                     table_count += 1
                     row_count += written
                     logger.info(
@@ -97,11 +171,32 @@ def import_sqlalchemy(options: ImportOptions) -> TransferSummary:
         with engine.connect() as connection:
             _prepare_connection(connection, parsed, read_only=False)
             schemas = _load_schemas(connection)
+            validated_targets: set[str] = set()
+
+            def validate_row(
+                header: TableBlockHeader, row: tuple[JSONValue, ...], line: int
+            ) -> None:
+                validate_import_row(row, header, options.mode, line)
+                if parsed.dialect == "mysql" or header.name in options.exclude_tables:
+                    return
+                if options.include_tables and header.name not in options.include_tables:
+                    return
+                target = schemas.get(header.name)
+                if target is None:
+                    raise DatabaseTransferError(f"target table {header.name!r} does not exist")
+                if header.name not in validated_targets:
+                    validate_target_table(header, target, options.mode)
+                    validated_targets.add(header.name)
+                try:
+                    _target_values(row, header, target, options, parsed)
+                except DatabaseTransferError as error:
+                    raise DatabaseTransferError(
+                        f"table {header.name!r} at JSONL line {line}: {error}"
+                    ) from error
+
             preview = scan_document(
                 options.input,
-                row_validator=lambda header, row, line: validate_import_row(
-                    row, header, options.mode, line
-                ),
+                row_validator=validate_row,
             )
             if preview.header.source not in ("sqlite", "mysql", "postgresql"):
                 raise DatabaseTransferError("JSONL source driver is invalid")
@@ -129,6 +224,8 @@ def import_sqlalchemy(options: ImportOptions) -> TransferSummary:
 
             connection.rollback()
             selected_names = set(ordered_names)
+            table_row_counts = {table.header.name: table.row_count for table in selected.tables}
+            committed_rows = 0
             expected_index = 0
             for _, table_header, rows in iter_document_tables(options.input):
                 if table_header.name not in selected_names:
@@ -146,7 +243,10 @@ def import_sqlalchemy(options: ImportOptions) -> TransferSummary:
                     selected_schemas[table_header.name],
                     options,
                     parsed,
+                    total_rows=table_row_counts[table_header.name],
+                    committed_rows=committed_rows,
                 )
+                committed_rows += written
                 expected_index += 1
                 logger.info(
                     "database import table completed dialect=%s table=%s rows=%d mode=%s",
@@ -246,6 +346,7 @@ def _encoded_rows(
     schema: TableSchema,
     options: ExportOptions,
     parsed: ParsedDsn,
+    progress: _TableProgress | None = None,
 ) -> Iterator[tuple[JSONValue, ...]]:
     while batch := result.fetchmany(BATCH_SIZE):
         for row in batch:
@@ -260,6 +361,63 @@ def _encoded_rows(
                 encode_value(value, column.declared_type, options.timezone)
                 for value, column in zip(values, schema.columns, strict=True)
             )
+            if progress is not None:
+                progress.advance(1)
+
+
+def _parameter_batches(
+    rows: Iterator[tuple[JSONValue, ...]],
+    header: TableBlockHeader,
+    target: TableSchema,
+    options: ImportOptions,
+    parsed: ParsedDsn,
+    parameter_names: list[str],
+) -> Iterator[list[dict[str, object]]]:
+    batch: list[dict[str, object]] = []
+    batch_bytes = 0
+    for row in rows:
+        values = _target_values(row, header, target, options, parsed)
+        row_bytes = sum(_value_bytes(value) for value in values)
+        if batch and batch_bytes + row_bytes > BATCH_BYTE_BUDGET:
+            yield batch
+            batch = []
+            batch_bytes = 0
+        batch.append(_parameters(values, parameter_names))
+        batch_bytes += row_bytes
+        if len(batch) >= BATCH_SIZE or batch_bytes >= BATCH_BYTE_BUDGET:
+            yield batch
+            batch = []
+            batch_bytes = 0
+    if batch:
+        yield batch
+
+
+def _value_bytes(value: object) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, bytes):
+        return len(value)
+    return len(str(value).encode("utf-8"))
+
+
+def _execute_batches(
+    connection: Connection,
+    statement: TextClause,
+    batches: Iterator[list[dict[str, object]]],
+    progress: _TableProgress,
+) -> int:
+    try:
+        with connection.begin():
+            for parameters in batches:
+                connection.execute(statement, parameters).close()
+                progress.advance(len(parameters))
+                # Release the completed batch before decoding the next one.
+                del parameters
+    except Exception:
+        progress.finish("rolled_back")
+        raise
+    progress.finish("committed")
+    return progress.rows
 
 
 def _import_table(
@@ -269,19 +427,40 @@ def _import_table(
     target: TableSchema,
     options: ImportOptions,
     parsed: ParsedDsn,
+    *,
+    total_rows: int,
+    committed_rows: int,
 ) -> int:
     names = [column.name for column in header.columns]
     quoted_table = _quote_identifier(connection, header.name)
     quoted_columns = ", ".join(_quote_identifier(connection, name) for name in names)
     parameter_names = [f"value_{index}" for index in range(len(names))]
     placeholders = ", ".join(f":{name}" for name in parameter_names)
-    insert_statement = text(
-        f"INSERT INTO {quoted_table} ({quoted_columns}) VALUES ({placeholders})"
-    )
+    insert_sql = f"INSERT INTO {quoted_table} ({quoted_columns}) VALUES ({placeholders})"
+    insert_statement = text(insert_sql)
     primary_key = header.primary_key
     key_positions = [names.index(name) for name in primary_key]
     written = 0
     try:
+        if parsed.dialect != "mysql":
+            if options.mode == "upsert":
+                conflict_columns = ", ".join(
+                    _quote_identifier(connection, name) for name in primary_key
+                )
+                assignments = ", ".join(
+                    f"{_quote_identifier(connection, name)} = "
+                    f"excluded.{_quote_identifier(connection, name)}"
+                    for name in names
+                    if name not in primary_key
+                )
+                action = f"DO UPDATE SET {assignments}" if assignments else "DO NOTHING"
+                insert_statement = text(f"{insert_sql} ON CONFLICT ({conflict_columns}) {action}")
+            return _execute_batches(
+                connection,
+                insert_statement,
+                _parameter_batches(rows, header, target, options, parsed, parameter_names),
+                _TableProgress("import", parsed, header.name, total_rows, committed_rows),
+            )
         with connection.begin():
             if options.mode == "insert":
                 for row in rows:

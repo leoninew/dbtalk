@@ -115,6 +115,8 @@ uv run dbtalk export \
 
 表按外键父表到子表顺序写入。只选择子表而未选择所需父表，或遇到外键环时会预检失败；工具不会自动创建 schema、补充表或关闭外键检查。大表固定按每批 1000 行循环读取，不使用 `fetchall()`。
 
+PostgreSQL export 显式启用数据库端流式游标，SQLite 使用本地游标分批取数；结果集在完成或失败时关闭。行数据逐行编码并写入临时文件，全部完成后原子替换输出制品。
+
 省略 `--output` 时创建当前目录的 `data/` 并生成 `<source>-<timestamp>.jsonl`。传入 `--archive` 时生成 `.jsonl.gz`。显式 `--output` 指向已有目录时，在该目录生成时间戳文件；其他路径视为文件路径，父目录必须已经存在。
 
 ## Import
@@ -146,6 +148,18 @@ uv run dbtalk import \
 | `--exclude-table NAME` | 排除表，可重复指定。 |
 
 写入前会扫描整个制品，校验结构、目标表、列类型、完整主键和外键顺序。`upsert` 命中主键时更新，未命中时插入；不会清空表，也不使用 `REPLACE` 或 `DELETE`。每个表块是一个事务，失败表块回滚，已提交的前序表块不会自动回滚。SQLite 导入后还会执行完整性和外键检查。
+
+PostgreSQL、SQLite 的首遍预检还会对选中数据执行目标类型转换检查；第二遍回放时转换并批量绑定参数。每批最多 1000 行，并按转换后的参数负载估算 8 MiB 字节预算；超预算的单行独立执行。预算不等于进程内存硬上限，最大单行仍会影响内存。批次不提交事务，整表成功才提交。PostgreSQL 通过 psycopg 3 的 `executemany` 在驱动支持时自动使用 pipeline。
+
+两种目标的 `upsert` 使用完整主键作为原生 `ON CONFLICT` 的冲突目标，按文件顺序执行，包括重复主键；只更新文件提供的非主键列。原生 upsert 会先尝试 INSERT，因此采用数据库的 INSERT/冲突处理约束和触发器语义。例如目标表额外存在无默认值的 NOT NULL 列，而 JSONL 未提供该列时，即使主键已有记录也可能失败。MySQL 保持原有执行方式。
+
+## Transfer 进度日志
+
+PostgreSQL、SQLite 在处理循环中约每 5 秒报告表级进度，并在表完成或回滚时报告最终状态。日志沿用现有文本格式与日志级别，写入 stderr，不改变 stdout 的命令结果；没有后台心跳线程，正在等待数据库响应时不会额外发出进度。
+
+导入日志的 `executed_rows`、`total_rows` 和 `pending_rows` 针对当前表，`committed_rows` 为本次任务已提交的输入行总数。`status=pending` 表示执行成功但尚待表事务提交；`committed` 表示整表已提交；`rolled_back` 表示当前表回滚，待提交数清零，前序表已提交数保留。行数按成功执行批次的输入记录统计，不使用数据库影响行数。
+
+导出日志报告当前表的 `written_rows`，`total_rows=unknown`，不额外查询全表行数。`table_completed` 表示表块写出完成；任务完成日志在输出制品原子替换后发出。两种进度均包含 `rows_per_second` 和 `elapsed_seconds`，按当前表的处理时间计算。
 
 ## JSONL 类型
 
