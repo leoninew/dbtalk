@@ -352,11 +352,13 @@ def test_load_backup_config_builds_each_target_dsn_from_its_connection(tmp_path:
     assert config.connections == (
         backup_db.BackupConnection(
             name="primary_mysql",
+            engine="mysql",
             dsn="mysql+pymysql://user:password@mysql.example:3307/",
             enabled=True,
         ),
         backup_db.BackupConnection(
             name="primary_postgres",
+            engine="postgres",
             dsn="postgresql+psycopg://user:password@postgres.example/",
             enabled=True,
         ),
@@ -510,6 +512,7 @@ def test_sync_parser_accepts_a_config_path_and_continue_on_error(tmp_path: Path)
 def test_list_connection_databases_uses_the_engine_specific_catalog() -> None:
     connection = backup_db.BackupConnection(
         name="primary_mysql",
+        engine="mysql",
         dsn="mysql+pymysql://user:password@mysql.example:3307/",
         enabled=True,
     )
@@ -636,6 +639,87 @@ def test_commands_succeed_without_database_operations_when_all_connections_are_d
     run_test.assert_not_called()
     list_databases.assert_not_called()
     assert config_path.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.parametrize("all_empty", [False, True])
+@pytest.mark.parametrize("empty_form", ["list", "null", "missing"])
+def test_run_sync_discovers_databases_for_connections_with_empty_lists(
+    tmp_path: Path, all_empty: bool, empty_form: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    config_path = tmp_path / "backup-db.yaml"
+    config = yaml.safe_load(_sync_config())
+    empty_connections = config["connections"] if all_empty else config["connections"][:1]
+    for connection in empty_connections:
+        if empty_form == "missing":
+            del connection["databases"]
+        else:
+            connection["databases"] = [] if empty_form == "list" else None
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    loaded = backup_db.load_backup_config(config_path)
+    args = backup_db.build_parser().parse_args(["sync", "--config", str(config_path)])
+
+    with (
+        patch.object(
+            backup_db,
+            "list_connection_databases",
+            side_effect=(
+                ("information_schema", "mysql", "new_mysql", "new_mysql_audit"),
+                ("postgres", "audit", "new_postgres"),
+            ),
+        ) as list_databases,
+        caplog.at_level(logging.INFO),
+    ):
+        assert backup_db.run_sync(args) == 0
+
+    assert list_databases.call_args_list == [
+        ((loaded.connections[0], "mysql"),),
+        ((loaded.connections[1], "postgres"),),
+    ]
+    synchronized = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert synchronized["connections"][0]["databases"] == [
+        {"name": "new_mysql", "enabled": True},
+        {"name": "new_mysql_audit", "enabled": True},
+    ]
+    assert synchronized["connections"][1]["databases"] == [
+        {"name": "audit", "enabled": all_empty},
+        {"name": "new_postgres", "enabled": True},
+    ]
+    assert "sync planned connection=primary_mysql added=new_mysql" in caplog.messages
+    assert "sync planned connection=primary_mysql added=new_mysql_audit" in caplog.messages
+
+
+@pytest.mark.parametrize("all_empty", [False, True])
+@pytest.mark.parametrize("empty_form", ["list", "null", "missing"])
+def test_run_tests_checks_connections_with_empty_database_lists(
+    tmp_path: Path, all_empty: bool, empty_form: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    config_path = tmp_path / "backup-db.yaml"
+    config = yaml.safe_load(_sync_config())
+    empty_connections = config["connections"] if all_empty else config["connections"][:1]
+    for connection in empty_connections:
+        if empty_form == "missing":
+            del connection["databases"]
+        else:
+            connection["databases"] = [] if empty_form == "list" else None
+    original = yaml.safe_dump(config)
+    config_path.write_text(original, encoding="utf-8")
+    args = backup_db.build_parser().parse_args(["test", "--config", str(config_path)])
+
+    with (
+        patch.object(backup_db, "load_backup_settings", return_value=_settings()),
+        patch.object(backup_db, "run_connection_test", return_value=True) as run_test,
+        caplog.at_level(logging.INFO),
+    ):
+        assert backup_db.run_tests(args) == 0
+
+    assert run_test.call_args_list == [
+        ((_settings(), "mysql+pymysql://user:password@mysql.example:3307/", 10),),
+        ((_settings(), "postgresql+psycopg://user:password@postgres.example/", 10),),
+    ]
+    assert config_path.read_text(encoding="utf-8") == original
+    assert (
+        "connection test run completed connections=2 passed=2 failed=0 skipped=0" in caplog.messages
+    )
 
 
 def test_run_sync_adds_enabled_databases_removes_stale_entries_and_is_idempotent(

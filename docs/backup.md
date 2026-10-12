@@ -1,25 +1,23 @@
-# Batch database backups
+# 数据库批量备份
 
-Configure connections and databases in `scripts/backup-db.yaml`, using
-`scripts/backup-db.example.yaml` as the template. Relative `output_directory`
-values resolve from the configuration file's directory; `../data` selects the
-repository's `data/` directory. Only databases with `enabled: true` are backed up.
+在 `scripts/backup-db.yaml` 中配置连接和数据库，可参考 `scripts/backup-db.example.yaml`。`output_directory` 的相对路径以配置文件所在目录为基准，`../data` 指向仓库的 `data/` 目录。
 
-Each connection must also have `enabled: true` to be processed by `backup`,
-`test`, or `sync`. Connections with `enabled: false` or no `enabled` field are
-skipped by all three commands. Database-level `enabled` controls backups only;
-both the connection and database must be enabled for a database to be backed up.
-`sync` preserves the database configuration of skipped connections.
+连接需要设置 `enabled: true`，否则 `backup`、`test` 和 `sync` 都会跳过该连接。数据库的 `enabled` 只控制备份；连接和数据库都启用时才会备份。
 
-Run from the repository root:
+`databases` 可以省略、留空、设为 `null` 或 `[]`，都表示空清单。
+
+`test` 测试所有已启用的连接，不依赖数据库清单。`sync` 查询已启用连接中的非系统库并更新清单：新增库默认启用，已有库保留设置，已不存在的库移除。新增或移除时每个库一行日志，跳过的连接保留原配置。
+
+在仓库根目录执行：
 
 ```bash
 bash scripts/backup.sh backup
 bash scripts/backup.sh backup --continue-on-error
+bash scripts/backup.sh test
+bash scripts/backup.sh sync
 ```
 
-Backups are grouped by connection name and database. Each run uses a local
-timestamp in `YYYYMMDD-HHMMSS` format:
+备份按连接名和数据库分目录保存，文件名使用本地时间戳 `YYYYMMDD-HHMMSS`：
 
 ```text
 data/
@@ -34,28 +32,20 @@ data/
     20261002-150000.md
 ```
 
-Database directories use `<name>_<database>`, where `name` is the configured
-connection name. PostgreSQL uses custom `.dump` archives; MySQL uses gzip SQL
-`.sql.gz` files. Existing backups are preserved. Runs sharing the same second
-append a sequence such as `-01` to the timestamp across backups and the manifest.
+目录名为 `<连接名>_<数据库名>`。PostgreSQL 使用 `.dump` 自定义归档，MySQL 使用 gzip 压缩的 `.sql.gz`。已有备份会保留，同一秒内重复运行会给备份和清单的时间戳追加 `-01` 等序号。
 
-Manifests list successful, reused, and failed backups, with backup paths relative
-to the manifest directory. DSN credentials are omitted.
+备份清单记录成功、复用和失败的结果，文件路径相对于清单目录，不包含 DSN 凭证。
 
-The completion log includes skipped databases, so `targets` equals
-`succeeded + failed + skipped`. Databases disabled by either the connection or
-database setting count as skipped; resumed backups that are reused count as
-successful. For example:
+完成日志中 `targets = succeeded + failed + skipped`。未启用的数据库计入跳过，续跑时复用的备份计入成功：
 
 ```text
 backup run completed targets=16 succeeded=10 failed=0 skipped=6
 ```
 
-Resume a run using its timestamp from the logs or manifest filename:
+使用日志或清单文件名中的时间戳续跑：
 
 ```bash
 bash scripts/backup.sh backup --resume 20261001-150000 --continue-on-error
 ```
 
-Resume reuses non-empty backups for that timestamp, retries empty or missing
-files, and rewrites the same manifest. It reads the current configuration.
+续跑读取当前配置，复用该时间戳下的非空备份，重新备份空文件或缺失的文件，并更新同一份清单。

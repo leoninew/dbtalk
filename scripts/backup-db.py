@@ -75,6 +75,7 @@ class BackupTarget:
 @dataclass(frozen=True)
 class BackupConnection:
     name: str
+    engine: Engine
     dsn: str
     enabled: bool
 
@@ -277,6 +278,11 @@ def _positive_config_integer(value: object, context: str) -> int:
     raise BackupError(f"{context} must be a positive integer")
 
 
+def _databases(values: Mapping[str, object], context: str) -> list[object]:
+    raw = values.get("databases")
+    return [] if raw is None else _list(raw, f"{context}.databases")
+
+
 def _exclude_tables(values: Mapping[str, object], context: str) -> tuple[str, ...]:
     raw = values.get("exclude_tables", [])
     if raw is None:
@@ -343,13 +349,12 @@ def load_backup_config(config_path: Path) -> BackupConfig:
         backup_connections.append(
             BackupConnection(
                 name=connection_name,
+                engine=engine,
                 dsn=connection_url.render_as_string(hide_password=False),
                 enabled=connection_enabled,
             )
         )
-        raw_databases = connection_config.get("databases")
-        if not isinstance(raw_databases, list) or not raw_databases:
-            raise BackupError(f"{connection_context}.databases must be a non-empty list")
+        raw_databases = _databases(connection_config, connection_context)
 
         for index, raw_database in enumerate(raw_databases, 1):
             database_context = f"{connection_context}.databases[{index}]"
@@ -367,9 +372,6 @@ def load_backup_config(config_path: Path) -> BackupConfig:
                     exclude_tables=_exclude_tables(database_config, database_context),
                 )
             )
-
-    if not targets:
-        raise BackupError("backup config contains no databases")
 
     return BackupConfig(
         output_directory=output_directory.resolve(),
@@ -712,9 +714,6 @@ def run_sync(args: argparse.Namespace) -> int:
     if len(raw_connections) != len(backup_config.connections):
         raise BackupError("config.connections changed while loading the backup config")
 
-    engines_by_connection = {
-        target.connection_name: target.engine for target in backup_config.targets
-    }
     changed = False
     failed = 0
     for index, (connection, raw_connection) in enumerate(
@@ -725,9 +724,7 @@ def run_sync(args: argparse.Namespace) -> int:
                 "sync skipped connection=%s enabled=%s", connection.name, connection.enabled
             )
             continue
-        engine = engines_by_connection.get(connection.name)
-        if engine is None:
-            raise BackupError(f"no database engine found for connection={connection.name}")
+        engine = connection.engine
         connection_context = f"config.connections[{index}]"
         connection_config = _mutable_mapping(raw_connection, connection_context)
         if _required_string(connection_config, "name", connection_context) != connection.name:
@@ -741,9 +738,7 @@ def run_sync(args: argparse.Namespace) -> int:
         )
         try:
             discovered = list_connection_databases(connection, engine)
-            raw_databases = _list(
-                connection_config.get("databases"), f"{connection_context}.databases"
-            )
+            raw_databases = _databases(connection_config, connection_context)
             synchronized, added, removed = _sync_databases(
                 raw_databases,
                 discovered,
@@ -761,12 +756,10 @@ def run_sync(args: argparse.Namespace) -> int:
             continue
         connection_config["databases"] = synchronized
         changed = True
-        logging.info(
-            "sync planned connection=%s added=%s removed=%s",
-            connection.name,
-            ",".join(added) or "-",
-            ",".join(removed) or "-",
-        )
+        for database in added:
+            logging.info("sync planned connection=%s added=%s", connection.name, database)
+        for database in removed:
+            logging.info("sync planned connection=%s removed=%s", connection.name, database)
 
     if not changed:
         logging.info("sync completed: no changes failed=%d", failed)
