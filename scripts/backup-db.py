@@ -12,7 +12,7 @@ import tempfile
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
 from unicodedata import category
@@ -58,6 +58,11 @@ SYSTEM_DATABASES: dict[Engine, frozenset[str]] = {
 }
 DSN_CREDENTIALS_PATTERN = re.compile(
     r"(?i)((?:mysql(?:\+pymysql)?|postgresql(?:\+psycopg)?):\/\/)[^@\s]+@"
+)
+CLEAN_RETENTION_DAYS = 7
+CLEAN_RETENTION_COUNT = 7
+CLEAN_FILENAME_PATTERN = re.compile(
+    r"(?P<timestamp>\d{8}-\d{6})(?:-(?P<sequence>\d{2,}))?\.(?P<extension>dump|sql\.gz|md)"
 )
 
 
@@ -128,7 +133,7 @@ def parse_batch_timestamp(value: str) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Back up databases or test configured database connections."
+        description="Back up databases, clean old backups, or manage database connections."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -193,6 +198,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--continue-on-error",
         action="store_true",
         help="Continue synchronizing remaining connections after one fails.",
+    )
+
+    clean_parser = subparsers.add_parser(
+        "clean",
+        help=(
+            f"Keep backups and manifests from the last {CLEAN_RETENTION_DAYS} days "
+            f"or the latest {CLEAN_RETENTION_COUNT} per directory."
+        ),
+    )
+    clean_parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG_PATH,
+        help="Backup YAML path (default: scripts/backup-db.yaml).",
+    )
+    clean_parser.add_argument(
+        "--no-dry-run",
+        dest="dry_run",
+        action="store_false",
+        help="Delete expired backups and manifests (default: preview only).",
     )
     return parser
 
@@ -912,6 +937,67 @@ def run_backups(args: argparse.Namespace) -> int:
     return 0 if not any(isinstance(result, BackupFailure) for result in results) else 1
 
 
+def run_clean(args: argparse.Namespace) -> int:
+    output_directory = load_backup_config(args.config).output_directory
+    cutoff = datetime.now() - timedelta(days=CLEAN_RETENTION_DAYS)
+    directories = retained = removed = 0
+    logging.info(
+        "clean run started output_dir=%s cutoff=%s dry_run=%s",
+        output_directory,
+        cutoff.isoformat(timespec="seconds"),
+        args.dry_run,
+    )
+    try:
+        if output_directory.exists():
+            for directory in sorted(output_directory.iterdir()):
+                if directory.is_symlink() or directory.is_junction() or not directory.is_dir():
+                    continue
+                extensions = {"md"} if directory.name == "manifests" else {"dump", "sql.gz"}
+                files: list[tuple[datetime, int, Path]] = []
+                for path in directory.iterdir():
+                    match = CLEAN_FILENAME_PATTERN.fullmatch(path.name)
+                    if (
+                        match is None
+                        or match["extension"] not in extensions
+                        or path.is_symlink()
+                        or not path.is_file()
+                        or path.stat().st_size == 0
+                    ):
+                        continue
+                    try:
+                        timestamp = datetime.strptime(match["timestamp"], "%Y%m%d-%H%M%S")
+                    except ValueError:
+                        continue
+                    sequence = int(match["sequence"] or 0)
+                    files.append((timestamp, sequence, path))
+                if not files:
+                    continue
+                directories += 1
+                files.sort(key=lambda file: (file[0], file[1], file[2].name), reverse=True)
+                for index, (timestamp, _, path) in enumerate(files):
+                    if index < CLEAN_RETENTION_COUNT or timestamp >= cutoff:
+                        retained += 1
+                        continue
+                    if not args.dry_run:
+                        path.unlink()
+                    removed += 1
+                    logging.info(
+                        "clean %s path=%s",
+                        "planned" if args.dry_run else "removed",
+                        display_path(path),
+                    )
+    except OSError as error:
+        raise BackupError(f"could not clean backup directory: {output_directory}") from error
+    logging.info(
+        "clean run completed directories=%d retained=%d %s=%d",
+        directories,
+        retained,
+        "planned" if args.dry_run else "removed",
+        removed,
+    )
+    return 0
+
+
 def run_tests(args: argparse.Namespace) -> int:
     backup_config = load_backup_config(args.config)
     settings = (
@@ -997,6 +1083,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return run_tests(args)
         if args.command == "sync":
             return run_sync(args)
+        if args.command == "clean":
+            return run_clean(args)
         raise BackupError(f"unsupported command: {args.command}")
     except BackupError:
         logging.exception("%s run failed", args.command)

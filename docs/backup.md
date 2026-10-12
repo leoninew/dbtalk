@@ -15,6 +15,8 @@ bash scripts/backup.sh backup
 bash scripts/backup.sh backup --continue-on-error
 bash scripts/backup.sh test
 bash scripts/backup.sh sync
+bash scripts/backup.sh clean
+bash scripts/backup.sh clean --no-dry-run
 ```
 
 备份按连接名和数据库分目录保存，文件名使用本地时间戳 `YYYYMMDD-HHMMSS`：
@@ -49,3 +51,9 @@ bash scripts/backup.sh backup --resume 20261001-150000 --continue-on-error
 ```
 
 续跑读取当前配置，复用该时间戳下的非空备份，重新备份空文件或缺失的文件，并更新同一份清单。
+
+`clean` 按每个连接与数据库目录独立清理，保留最近 7 日内的备份或最近 7 个备份，满足任一条件即保留。`manifests` 目录独立遵循相同规则，保留最近 7 日内的清单或最近 7 个清单。7 日按执行时的本地时间向前推算 7×24 小时，以文件名中的时间戳为准，包含临界时刻；同一秒的文件按追加序号排序。
+
+清理会扫描 `output_directory` 下的全部数据库目录和 `manifests` 目录，包括已停用或已从配置中移除的数据库，不连接数据库。数据库目录仅处理符合当前时间戳命名规则的非空 `.dump` 和 `.sql.gz` 文件，`manifests` 目录仅处理同样命名的非空 `.md` 文件。空文件不计入最近 7 个文件，其他文件和符号链接或目录联接会保留。
+
+`clean` 默认只预览待删除文件，添加 `--no-dry-run` 才执行删除。可通过 `clean --config <path>` 指定备份配置，默认使用 `scripts/backup-db.yaml`。

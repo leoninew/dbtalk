@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import os
 import sys
 from dataclasses import replace
 from datetime import datetime
@@ -251,6 +252,172 @@ def test_a_new_run_preserves_backups_left_by_an_interrupted_run(tmp_path: Path) 
         b"next archive"
     )
     assert (tmp_path / "manifests" / "20261001-150000-01.md").is_file()
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_clean_keeps_recent_files_or_the_latest_seven_per_directory(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, dry_run: bool
+) -> None:
+    recent = {
+        "20261001-120000.dump",
+        "20261005-115959.dump",
+        "20261005-120000.dump",
+        *(f"20261008-0{hour}0000.dump" for hour in range(8)),
+    }
+    old = {f"202609{day:02d}-120000.sql.gz" for day in range(23, 31)}
+    sparse = {"20260801-120000.dump", "20260802-120000.dump"}
+    manifests = {filename.removesuffix(".dump") + ".md" for filename in recent}
+    original = {
+        "retired_postgres_app": recent,
+        "disabled_mysql_app": old,
+        "replica_app": sparse,
+        "manifests": manifests,
+    }
+    for name, filenames in original.items():
+        directory = tmp_path / name
+        directory.mkdir()
+        for filename in filenames:
+            path = directory / filename
+            path.write_bytes(b"backup")
+            os.utime(path, (0, 0))
+    config = _backup_run_config(tmp_path)
+    argv = ["clean"] if dry_run else ["clean", "--no-dry-run"]
+
+    with (
+        patch.object(backup_db, "load_backup_config", return_value=config),
+        patch.object(backup_db, "load_backup_settings") as settings,
+        patch.object(backup_db, "datetime") as clock,
+        caplog.at_level(logging.INFO),
+    ):
+        clock.now.return_value = datetime(2026, 10, 12, 12, 0, 0)
+        clock.strptime.side_effect = datetime.strptime
+        assert backup_db.main(argv) == 0
+        assert backup_db.main(argv) == 0
+
+    expected = (
+        original
+        if dry_run
+        else {
+            "retired_postgres_app": recent - {"20261001-120000.dump", "20261005-115959.dump"},
+            "disabled_mysql_app": old - {"20260923-120000.sql.gz"},
+            "replica_app": sparse,
+            "manifests": manifests - {"20261001-120000.md", "20261005-115959.md"},
+        }
+    )
+    for name, filenames in expected.items():
+        assert {path.name for path in (tmp_path / name).iterdir()} == filenames
+        assert all(path.read_bytes() == b"backup" for path in (tmp_path / name).iterdir())
+    settings.assert_not_called()
+    action = "planned" if dry_run else "removed"
+    assert f"clean run completed directories=4 retained=27 {action}=5" in caplog.messages
+    assert f"clean run completed directories=4 retained=27 {action}={5 if dry_run else 0}" in (
+        caplog.messages
+    )
+
+
+@pytest.mark.parametrize(
+    ("directory_name", "extension"),
+    [("primary_postgres_app", ".dump"), ("primary_mysql_app", ".sql.gz"), ("manifests", ".md")],
+)
+def test_clean_orders_same_second_files_by_numeric_sequence_and_ignores_other_files(
+    tmp_path: Path, directory_name: str, extension: str
+) -> None:
+    directory = tmp_path / directory_name
+    directory.mkdir()
+    backups = {
+        f"20260901-120000{extension}",
+        *(
+            f"20260901-120000-{sequence:02d}{extension}"
+            for sequence in (1, 2, 3, 4, 5, 6, 7, 8, 99, 100)
+        ),
+    }
+    other_extension = ".dump" if extension == ".md" else ".md"
+    ignored = {
+        "notes.txt",
+        f"20260901-120000{extension}.tmp",
+        f"20260230-120000{extension}",
+        f"20260901-120000{other_extension}",
+    }
+    for filename in backups | ignored:
+        (directory / filename).write_bytes(b"original")
+    args = backup_db.build_parser().parse_args(["clean", "--no-dry-run"])
+
+    with (
+        patch.object(backup_db, "load_backup_config", return_value=_backup_run_config(tmp_path)),
+        patch.object(backup_db, "datetime") as clock,
+    ):
+        clock.now.return_value = datetime(2026, 10, 12, 12, 0, 0)
+        clock.strptime.side_effect = datetime.strptime
+        assert backup_db.run_clean(args) == 0
+
+    retained = {
+        f"20260901-120000-{sequence:02d}{extension}" for sequence in (4, 5, 6, 7, 8, 99, 100)
+    }
+    assert {path.name for path in directory.iterdir()} == retained | ignored
+
+
+def test_clean_does_not_follow_backup_directory_links(tmp_path: Path) -> None:
+    output_directory = tmp_path / "backups"
+    output_directory.mkdir()
+    external = tmp_path / "external"
+    external.mkdir()
+    for day in range(1, 9):
+        (external / f"202609{day:02d}-120000.dump").write_bytes(b"external backup")
+    try:
+        (output_directory / "linked_postgres_app").symlink_to(external, target_is_directory=True)
+    except OSError:
+        pytest.skip("Creating directory symlinks is not supported in this environment")
+    args = backup_db.build_parser().parse_args(["clean", "--no-dry-run"])
+
+    with patch.object(
+        backup_db, "load_backup_config", return_value=_backup_run_config(output_directory)
+    ):
+        assert backup_db.run_clean(args) == 0
+
+    assert len(list(external.iterdir())) == 8
+
+
+def test_clean_does_not_count_empty_files_as_retained_backups(tmp_path: Path) -> None:
+    directory = tmp_path / "primary_postgres_app"
+    directory.mkdir()
+    valid = {f"202609{day:02d}-120000.dump" for day in range(1, 9)}
+    empty = {f"202610{day:02d}-120000.dump" for day in range(1, 9)}
+    for filename in valid:
+        (directory / filename).write_bytes(b"backup")
+    for filename in empty:
+        (directory / filename).touch()
+    args = backup_db.build_parser().parse_args(["clean", "--no-dry-run"])
+
+    with (
+        patch.object(backup_db, "load_backup_config", return_value=_backup_run_config(tmp_path)),
+        patch.object(backup_db, "datetime") as clock,
+    ):
+        clock.now.return_value = datetime(2026, 10, 12, 12, 0, 0)
+        clock.strptime.side_effect = datetime.strptime
+        assert backup_db.run_clean(args) == 0
+
+    assert {path.name for path in directory.iterdir()} == (valid - {"20260901-120000.dump"}) | empty
+
+
+def test_clean_reports_a_deletion_failure(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    directory = tmp_path / "primary_postgres_app"
+    directory.mkdir()
+    for day in range(1, 9):
+        (directory / f"202609{day:02d}-120000.dump").write_bytes(b"backup")
+
+    with (
+        patch.object(backup_db, "load_backup_config", return_value=_backup_run_config(tmp_path)),
+        patch.object(backup_db, "datetime") as clock,
+        patch.object(Path, "unlink", side_effect=PermissionError("file is locked")),
+        caplog.at_level(logging.INFO),
+    ):
+        clock.now.return_value = datetime(2026, 10, 12, 12, 0, 0)
+        clock.strptime.side_effect = datetime.strptime
+        assert backup_db.main(["clean", "--no-dry-run"]) == 1
+
+    assert len(list(directory.iterdir())) == 8
+    assert "clean run failed" in caplog.messages
+    assert not any(message.startswith("clean run completed") for message in caplog.messages)
 
 
 def test_run_dump_uses_the_postgres_package_api(tmp_path: Path) -> None:
