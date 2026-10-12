@@ -83,6 +83,8 @@ Agent 在第一条数据库命令前将 DSN 写入 `.env`。`--dsn-env DBTALK_DS
 | `dbtalk postgres schema` | 管理 PostgreSQL schema/database |
 | `dbtalk postgres role` | 管理 PostgreSQL role |
 | `dbtalk postgres grant` / `dbtalk postgres revoke` | 授予或撤销 PostgreSQL 权限 |
+| `dbtalk postgres owner reassign` | 原生重分配角色所有权，可能影响共享对象 |
+| `dbtalk postgres owner transfer` | 按数据库/schema 转移业务对象所有权，排除系统和扩展对象 |
 | `dbtalk mysql permissions list/show` | 查看 MySQL 原生权限 |
 | `dbtalk postgres permissions list/show` | 查看 PostgreSQL 原生权限 |
 | `dbtalk mysql dump/restore` | 处理 MySQL SQL dump |

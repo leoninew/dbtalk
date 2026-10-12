@@ -19,6 +19,7 @@ uv run dbtalk postgres permissions --help
 | `grant` / `revoke` | 按 profile 或原生 `--privilege` 授予、撤销 database/schema 权限。 |
 | `permissions list/show` | 查看当前 DSN 可见的原生授权，可按 role、database、schema 筛选。 |
 | `owner reassign` | 预览或转移一个 role 在当前库及共享对象上的所有权。 |
+| `owner transfer` | 按 database/schema 预览或转移业务对象所有权，排除系统和扩展对象。 |
 | `dump` / `restore` | 创建或恢复单库 custom archive。 |
 
 ## DSN 与客户端
@@ -60,6 +61,28 @@ uv run dbtalk postgres owner reassign \
 ```
 
 DSN 连接到 `--database` 指定的库。操作会转移该 role 在当前库拥有的所有对象，同时可能转移它拥有的数据库、表空间等共享对象；不能限制在某个 schema 或某类表。预览按目录统计当前库及共享对象，但不是执行后状态的保证；执行前须核对共享对象，确认身份和目标库。若源 role 拥有共享对象，除 `--yes` 外还必须加 `--include-shared`，否则拒绝执行；这个选项不会缩小原生命令的范围。原生命令要求执行者具备源和目标 role 的成员资格（超级用户可执行）。转移不会撤销旧 role 从其他对象获得的授权，也不重写 default privileges。若只转某些表，应改用明确范围的 `ALTER TABLE ... OWNER TO ...`，不要用本命令。
+
+原生命令不能以初始化及内置系统角色为源，例如 initdb 创建的 `postgres`；角色重命名后仍受此限制。dbtalk 在预览前按角色 OID 检查并报错，避免 `pg_shdepend` 缺少初始化角色依赖导致误导性的空预览。用户创建的普通超级用户不受此限制。共享对象预览同时列出数据库、表空间的名称和 owner。
+
+`owner transfer` 用逐对象 `ALTER ... OWNER TO ...` 处理业务对象，支持从初始化角色转出。目标 database、两个 role 必填；可重复指定 `--schema`，省略时检查全部非系统 schema 及无 schema 的库内对象。默认展示直接对象、附属影响、排除项、阻塞项和计划 SQL；显式 `--yes` 才在单个事务内执行：
+
+```bash
+uv run dbtalk postgres owner transfer \
+  --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
+  --database app --schema public --from-role postgres --to-role app_role
+uv run dbtalk postgres owner transfer \
+  --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
+  --database app --schema public --from-role postgres --to-role app_role --yes
+```
+
+首版支持源角色持有的 schema、普通/分区/外部表、view、materialized view、sequence、function、procedure、aggregate、enum、domain、composite、range。索引、TOAST、行类型、自动数组/multirange 以及表拥有的序列随父对象转移，展示为附属影响；分区分别纳入计划。其他角色的对象不转移；`public` 的 owner 若为 `pg_database_owner`，源角色为 `postgres` 时不强行改变它。
+
+系统 schema、内置对象、extension 本身及其成员和自动附属对象不转移。同一 schema 内的非成员业务对象仍可转移。若直接对象会间接改变扩展成员，例如业务表拥有的序列被加入 extension，整份计划拒绝执行。范围内不支持的 operator、operator class/family、collation、conversion、text search 配置/dictionary、extended statistics 等对象也会阻止执行。省略 `--schema` 时，publication、subscription、FDW/server、自定义 language、event trigger、large object 等无 schema 的源角色对象同样列为阻塞项；指定 schema 时这些对象不在范围。
+
+`transfer` 不改变任何 database/tablespace owner，不提供 `--include-shared`，不授予 ACL、成员关系、角色属性或 default privileges。执行者需继承源角色所有权并能 `SET` 到目标角色，目标角色需具有必要的 schema `CREATE`；若 schema 本身转移，非超级用户执行时目标角色还需 database `CREATE`。超级用户遵循 PostgreSQL 的原生权限规则。命令不自动 `GRANT`；访问或迁移权限仍使用 `postgres grant` 配置。
+
+执行使用本次事务生成的计划，锁定适用的表并复核对象身份、owner、extension membership 和自动传播边；执行后核对归属，任意失败整体回滚。两次调用间的预览不冻结目录，并发新增的独立对象不自动纳入计划。owner 变更会持有 DDL 锁，现有事件触发器照常执行；命令不禁用触发器，也不能回滚用户回调造成的外部副作用。
+
 ## Schema management
 
 `schema` 子命令管理 PostgreSQL schema/database，不执行任意 SQL、不管理 role，也不替代 dump/restore。`list`、`create` 与 `drop` 的管理 DSN 都可以省略 database path。`drop` 以 `--name` 为删除目标，连接后读取当前会话数据库；若与 `--name` 相同则拒绝。账号还需要相应的建库或删库权限。

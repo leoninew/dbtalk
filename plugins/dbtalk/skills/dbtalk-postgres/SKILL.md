@@ -75,6 +75,20 @@ dbtalk postgres owner reassign --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
 dbtalk postgres owner reassign --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
   --database app --from-role old_owner --to-role new_owner --yes
 ```
+
+原生 `reassign` 不能以 initdb 的 `postgres` 或其他内置系统角色为源，重命名仍不能绕过；增加 `--include-shared` 不解决这一限制。需要转移业务对象时使用 `owner transfer`：
+
+```bash
+dbtalk postgres owner transfer --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
+  --database app --schema public --from-role postgres --to-role app_role
+dbtalk postgres owner transfer --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
+  --database app --schema public --from-role postgres --to-role app_role --yes
+```
+
+`transfer` 必须明确 database、源/目标 role 与写入授权；默认预览，核对直接对象、自动附属对象、排除项、阻塞项和 SQL 后才执行。`--schema` 可重复；省略时检查当前库全部非系统 schema 和无 schema 的库内对象，不推断用户只授权了 public。支持 schema、普通/分区/外部表、view/materialized view、sequence、function/procedure/aggregate、enum/domain/composite/range；索引、TOAST、行类型、自动数组/multirange、表拥有的序列随父对象转移。系统对象、extension 及其成员和自动附属对象排除；自动传播会影响扩展成员时拒绝整个计划。范围内未支持的对象也阻止执行，不能将它们忽略后报告完成。
+
+`transfer` 不改变 database/tablespace owner，没有 `--include-shared`；不授予 ACL、role membership、角色属性或 default privileges，不替代 `grant migrator`。执行者和目标角色需具有 PostgreSQL 要求的权限，命令不自动提升或补授。整份计划使用一个事务，失败回滚；执行前后复核对象身份、归属和扩展关系，但预览不冻结两次调用之间的并发 DDL。不得自动改用 `reassign`、扩大 schema 范围、禁用事件触发器或终止其他会话。
+
 ## Role 与授权
 
 先查看命令帮助：

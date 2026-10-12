@@ -49,7 +49,7 @@ class Connection:
         self.rolled_back = False
         self.fail_reassign = False
         self.database = "app"
-        self.roles = [("source",), ("target",)]
+        self.roles = [(20000, "source"), (20001, "target")]
         self.shared_objects: list[tuple[object, ...]] = [("pg_database", 1)]
 
     def __enter__(self) -> Connection:
@@ -73,8 +73,10 @@ class Connection:
     def execute(self, statement: object, parameters: dict[str, object]) -> Result:
         self.statements.append(str(statement))
         self.parameters.append(parameters)
-        if "SELECT rolname" in str(statement):
+        if "SELECT oid, rolname" in str(statement):
             return Result(list(self.roles))
+        if "SELECT 'database'" in str(statement):
+            return Result([("database", "app", "source")])
         if "dbid = 0" in str(statement):
             return Result(self.shared_objects)
         return Result([("pg_class", 3)])
@@ -111,13 +113,16 @@ def test_reassign_previews_without_writing_and_reports_shared_objects(
 
     result = postgres_owner.reassign_owned(parsed(), "app", "source", "target")
 
-    assert result == OwnershipPreview("app", (("pg_class", 3),), (("pg_database", 1),))
+    assert result == OwnershipPreview(
+        "app", (("pg_class", 3),), (("pg_database", 1),), (("database", "app", "source"),)
+    )
     assert engine.connected_database == "app"
     assert not any(statement.startswith("REASSIGN") for statement in connection.statements)
     assert connection.parameters == [
         {"source": "source", "target": "target"},
         {"source": "source"},
         {"source": "source"},
+        {"source_oid": 20000},
     ]
     assert engine.disposed
 
@@ -144,7 +149,7 @@ def test_reassign_refuses_changed_target_before_writing(
     if mismatch == "database":
         connection.database = "other"
     else:
-        connection.roles = [("source",)]
+        connection.roles = [(20000, "source")]
     monkeypatch.setattr(postgres_owner, "create_engine", lambda _: Engine(connection))
 
     with pytest.raises(
@@ -178,7 +183,9 @@ def test_owner_cli_previews_by_default_and_executes_only_with_yes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[bool, bool]] = []
-    preview = OwnershipPreview("app", (("pg_class", 3),), (("pg_database", 1),))
+    preview = OwnershipPreview(
+        "app", (("pg_class", 3),), (("pg_database", 1),), (("database", "app", "source"),)
+    )
     monkeypatch.setattr(postgres_owner, "resolve_management_dsn", lambda *_: parsed())
 
     def reassign(*_: object, execute: bool, include_shared: bool) -> OwnershipPreview:
@@ -256,10 +263,26 @@ def test_reassign_proceeds_without_shared_objects(monkeypatch: pytest.MonkeyPatc
 
 def test_reassign_quotes_case_sensitive_role_names(monkeypatch: pytest.MonkeyPatch) -> None:
     connection = Connection()
-    connection.roles = [("SourceRole",), ("TargetRole",)]
+    connection.roles = [(20000, "SourceRole"), (20001, "TargetRole")]
     connection.shared_objects = []
     monkeypatch.setattr(postgres_owner, "create_engine", lambda _: Engine(connection))
 
     postgres_owner.reassign_owned(parsed(), "app", "SourceRole", "TargetRole", execute=True)
 
     assert connection.statements[-1] == 'REASSIGN OWNED BY "SourceRole" TO "TargetRole"'
+
+
+@pytest.mark.parametrize("source", ["postgres", "renamed_bootstrap"])
+@pytest.mark.parametrize("execute", [False, True])
+def test_reassign_rejects_pinned_source_before_catalog_preview(
+    monkeypatch: pytest.MonkeyPatch, source: str, execute: bool
+) -> None:
+    connection = Connection()
+    connection.roles = [(10, source), (20001, "target")]
+    monkeypatch.setattr(postgres_owner, "create_engine", lambda _: Engine(connection))
+
+    with pytest.raises(DatabaseOperationError, match="use postgres owner transfer"):
+        postgres_owner.reassign_owned(parsed(), "app", source, "target", execute=execute)
+
+    assert not any("pg_shdepend" in statement for statement in connection.statements)
+    assert not any(statement.startswith("REASSIGN") for statement in connection.statements)
