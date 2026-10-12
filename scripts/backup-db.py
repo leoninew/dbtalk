@@ -174,7 +174,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=positive_integer,
         default=None,
         help=(
-            "Maximum database connection time for each connection test in seconds. "
+            "Maximum connection and query time for each connection test in seconds. "
             "Overrides target_validation.connection_timeout_seconds in the backup YAML."
         ),
     )
@@ -612,7 +612,9 @@ def run_connection_test(
             dsn,
             None,
             "SELECT 1",
-            timeout_seconds=settings.database.query_timeout_seconds,
+            timeout_seconds=min(
+                settings.database.query_timeout_seconds, connection_timeout_seconds
+            ),
             connect_timeout_seconds=connection_timeout_seconds,
         )
     except DatabaseOperationError:
@@ -651,11 +653,22 @@ def _validate_database_names(names: Sequence[str], connection_name: str) -> tupl
 def list_connection_databases(
     connection: BackupConnection,
     engine: Engine,
+    timeout_seconds: int,
 ) -> tuple[str, ...]:
     try:
         parsed = parse_dsn(_management_dsn(connection.dsn, engine))
         databases = (
-            list_mysql_databases(parsed) if engine == "mysql" else list_postgres_databases(parsed)
+            list_mysql_databases(
+                parsed,
+                timeout_seconds=timeout_seconds,
+                connect_timeout_seconds=timeout_seconds,
+            )
+            if engine == "mysql"
+            else list_postgres_databases(
+                parsed,
+                timeout_seconds=timeout_seconds,
+                connect_timeout_seconds=timeout_seconds,
+            )
         )
     except DatabaseOperationError as error:
         raise BackupError(
@@ -762,7 +775,9 @@ def run_sync(args: argparse.Namespace) -> int:
             connection.name,
         )
         try:
-            discovered = list_connection_databases(connection, engine)
+            discovered = list_connection_databases(
+                connection, engine, backup_config.target_validation_connection_timeout_seconds
+            )
             raw_databases = _databases(connection_config, connection_context)
             synchronized, added, removed = _sync_databases(
                 raw_databases,

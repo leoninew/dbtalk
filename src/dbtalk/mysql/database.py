@@ -11,6 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from tabulate import tabulate
 
 from dbtalk.cli_runtime import DbtalkGroup
+from dbtalk.database.connection import DatabaseClient
 from dbtalk.database.dsn import ParsedDsn, dsn_from_environment, parse_dsn
 from dbtalk.database.models import DatabaseOperationError, sanitize_error_detail
 
@@ -78,16 +79,27 @@ def resolve_management_dsn(dsn: str | None, environment_name: str | None) -> Par
     return parsed
 
 
-def list_databases(parsed: ParsedDsn) -> tuple[str, ...]:
+def list_databases(
+    parsed: ParsedDsn,
+    *,
+    timeout_seconds: float | None = None,
+    connect_timeout_seconds: float | None = None,
+) -> tuple[str, ...]:
     """Return visible MySQL database names in stable order."""
 
     _validate_management_dsn(parsed)
-    return _run_management_operation(
-        parsed,
-        lambda connection: tuple(
-            sorted(str(row[0]) for row in connection.exec_driver_sql("SHOW DATABASES").fetchall())
-        ),
-    )
+    try:
+        with DatabaseClient(
+            parsed,
+            timeout_seconds=timeout_seconds,
+            connect_timeout_seconds=connect_timeout_seconds,
+        ) as client:
+            result = client.query("SHOW DATABASES")
+            return tuple(sorted(str(row[0]) for row in result.rows))
+    except DatabaseOperationError as error:
+        raise DatabaseOperationError(
+            f"MySQL database management failed: {sanitize_error_detail(str(error))}"
+        ) from error
 
 
 def create_database(parsed: ParsedDsn, name: str) -> None:

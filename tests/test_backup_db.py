@@ -45,16 +45,22 @@ def _settings() -> Settings:
     )
 
 
-def test_connection_test_uses_the_package_query_api_with_a_connection_timeout() -> None:
+@pytest.mark.parametrize("connection_timeout_seconds", [5, 7])
+def test_connection_test_uses_the_package_query_api_with_a_connection_timeout(
+    connection_timeout_seconds: int,
+) -> None:
     settings = _settings()
 
     with patch.object(backup_db, "query_from_dsn") as query:
-        assert backup_db.run_connection_test(settings, "sqlite:///", 7) is True
+        assert (
+            backup_db.run_connection_test(settings, "sqlite:///", connection_timeout_seconds)
+            is True
+        )
 
     assert query.call_args.args == ("sqlite:///", None, "SELECT 1")
     assert query.call_args.kwargs == {
-        "timeout_seconds": 30,
-        "connect_timeout_seconds": 7,
+        "timeout_seconds": connection_timeout_seconds,
+        "connect_timeout_seconds": connection_timeout_seconds,
     }
 
 
@@ -82,7 +88,7 @@ def _backup_run_config(output_directory: Path) -> Any:
     postgres = _postgres_dump_target()
     return backup_db.BackupConfig(
         output_directory=output_directory,
-        target_validation_connection_timeout_seconds=10,
+        target_validation_connection_timeout_seconds=5,
         connections=(),
         targets=(
             postgres,
@@ -477,7 +483,7 @@ def test_load_backup_config_builds_each_target_dsn_from_its_connection(tmp_path:
     config_path.write_text(
         "output_directory: backups\n"
         "target_validation:\n"
-        "  connection_timeout_seconds: 10\n"
+        "  connection_timeout_seconds: 5\n"
         "connections:\n"
         "  - name: primary_mysql\n"
         "    enabled: true\n"
@@ -537,7 +543,7 @@ def test_load_backup_config_reads_exclude_tables(tmp_path: Path) -> None:
     config_path.write_text(
         "output_directory: backups\n"
         "target_validation:\n"
-        "  connection_timeout_seconds: 10\n"
+        "  connection_timeout_seconds: 5\n"
         "connections:\n"
         "  - name: primary_postgres\n"
         "    enabled: true\n"
@@ -561,7 +567,7 @@ def test_load_backup_config_rejects_blank_exclude_tables(tmp_path: Path) -> None
     config_path.write_text(
         "output_directory: backups\n"
         "target_validation:\n"
-        "  connection_timeout_seconds: 10\n"
+        "  connection_timeout_seconds: 5\n"
         "connections:\n"
         "  - name: primary_postgres\n"
         "    enabled: true\n"
@@ -612,7 +618,7 @@ def test_run_tests_runs_once_per_connection_with_its_base_dsn(tmp_path: Path) ->
     config_path.write_text(
         "output_directory: backups\n"
         "target_validation:\n"
-        "  connection_timeout_seconds: 10\n"
+        "  connection_timeout_seconds: 5\n"
         "connections:\n"
         "  - name: primary_mysql\n"
         "    enabled: true\n"
@@ -651,7 +657,7 @@ def test_load_backup_config_rejects_a_connection_dsn_with_a_database(tmp_path: P
     config_path.write_text(
         "output_directory: backups\n"
         "target_validation:\n"
-        "  connection_timeout_seconds: 10\n"
+        "  connection_timeout_seconds: 5\n"
         "connections:\n"
         "  - name: primary_mysql\n"
         "    enabled: true\n"
@@ -676,25 +682,49 @@ def test_sync_parser_accepts_a_config_path_and_continue_on_error(tmp_path: Path)
     assert args.continue_on_error is True
 
 
-def test_list_connection_databases_uses_the_engine_specific_catalog() -> None:
+@pytest.mark.parametrize(
+    ("engine", "dsn", "catalog", "management_database"),
+    [
+        (
+            "mysql",
+            "mysql+pymysql://user:password@mysql.example:3307/",
+            "list_mysql_databases",
+            "mysql",
+        ),
+        (
+            "postgres",
+            "postgresql+psycopg://user:password@postgres.example/",
+            "list_postgres_databases",
+            "postgres",
+        ),
+    ],
+)
+def test_list_connection_databases_passes_timeouts_to_the_engine_specific_catalog(
+    engine: str, dsn: str, catalog: str, management_database: str
+) -> None:
     connection = backup_db.BackupConnection(
-        name="primary_mysql",
-        engine="mysql",
-        dsn="mysql+pymysql://user:password@mysql.example:3307/",
+        name=f"primary_{engine}",
+        engine=engine,
+        dsn=dsn,
         enabled=True,
     )
 
-    with patch.object(backup_db, "list_mysql_databases", return_value=("app", "mysql")) as list_db:
-        assert backup_db.list_connection_databases(connection, "mysql") == ("app", "mysql")
+    with patch.object(backup_db, catalog, return_value=("app", management_database)) as list_db:
+        assert backup_db.list_connection_databases(connection, engine, 5) == (
+            "app",
+            management_database,
+        )
 
     assert list_db.call_count == 1
+    assert list_db.call_args.args[0].url.database == management_database
+    assert list_db.call_args.kwargs == {"timeout_seconds": 5, "connect_timeout_seconds": 5}
 
 
 def _sync_config() -> str:
     return (
         "output_directory: backups\n"
         "target_validation:\n"
-        "  connection_timeout_seconds: 10\n"
+        "  connection_timeout_seconds: 5\n"
         "connections:\n"
         "  - name: primary_mysql\n"
         "    enabled: true\n"
@@ -765,9 +795,9 @@ def test_commands_skip_connections_that_are_not_enabled(
             "manifests",
         }
     elif command == "test":
-        run_test.assert_called_once_with(_settings(), loaded.connections[0].dsn, 10)
+        run_test.assert_called_once_with(_settings(), loaded.connections[0].dsn, 5)
     else:
-        list_databases.assert_called_once_with(loaded.connections[0], "mysql")
+        list_databases.assert_called_once_with(loaded.connections[0], "mysql", 5)
         synchronized = yaml.safe_load(config_path.read_text(encoding="utf-8"))
         assert synchronized["connections"][1] == disabled_connection
         assert synchronized["connections"][0]["databases"][-1] == {
@@ -839,8 +869,8 @@ def test_run_sync_discovers_databases_for_connections_with_empty_lists(
         assert backup_db.run_sync(args) == 0
 
     assert list_databases.call_args_list == [
-        ((loaded.connections[0], "mysql"),),
-        ((loaded.connections[1], "postgres"),),
+        ((loaded.connections[0], "mysql", 5),),
+        ((loaded.connections[1], "postgres", 5),),
     ]
     synchronized = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     assert synchronized["connections"][0]["databases"] == [
@@ -880,8 +910,8 @@ def test_run_tests_checks_connections_with_empty_database_lists(
         assert backup_db.run_tests(args) == 0
 
     assert run_test.call_args_list == [
-        ((_settings(), "mysql+pymysql://user:password@mysql.example:3307/", 10),),
-        ((_settings(), "postgresql+psycopg://user:password@postgres.example/", 10),),
+        ((_settings(), "mysql+pymysql://user:password@mysql.example:3307/", 5),),
+        ((_settings(), "postgresql+psycopg://user:password@postgres.example/", 5),),
     ]
     assert config_path.read_text(encoding="utf-8") == original
     assert (

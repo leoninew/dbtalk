@@ -13,6 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 import dbtalk.mysql.database as mysql_database
 import dbtalk.postgres.database as postgres_database
 from dbtalk.cli import cli
+from dbtalk.database import connection as database_connection
 from dbtalk.database.dsn import ParsedDsn, parse_dsn
 from dbtalk.database.models import DatabaseOperationError
 
@@ -23,6 +24,9 @@ class FakeResult:
 
     def fetchall(self) -> list[tuple[Any, ...]]:
         return self._rows
+
+    def keys(self) -> tuple[str]:
+        return ("database",)
 
     def fetchone(self) -> tuple[Any, ...] | None:
         return self._rows[0] if self._rows else None
@@ -38,6 +42,7 @@ class FakeConnection:
         self.rows = list(rows or ())
         self.execution_options_value: dict[str, object] | None = None
         self.statements: list[str] = []
+        self.parameters: list[dict[str, object]] = []
         self.error: SQLAlchemyError | None = None
 
     def __enter__(self) -> FakeConnection:
@@ -55,6 +60,10 @@ class FakeConnection:
         if self.error is not None:
             raise self.error
         return FakeResult(self.rows)
+
+    def execute(self, statement: Any, parameters: dict[str, object]) -> FakeResult:
+        self.parameters.append(parameters)
+        return self.exec_driver_sql(str(statement))
 
 
 class FakeEngine:
@@ -101,11 +110,49 @@ def test_list_databases_uses_dialect_sql_and_disposes_engine(
 ) -> None:
     connection = FakeConnection(dialect, rows)
     engine = FakeEngine(connection)
-    monkeypatch.setattr(module, "create_engine", lambda _: engine)
+    monkeypatch.setattr(database_connection, "create_engine", lambda *args, **kwargs: engine)
 
     assert module.list_databases(parsed) == ("alpha", "zeta")
-    assert connection.statements == [expected_sql]
-    assert connection.execution_options_value == {"isolation_level": "AUTOCOMMIT"}
+    assert connection.statements[-1] == expected_sql
+    assert engine.disposed
+
+
+@pytest.mark.parametrize(
+    ("module", "parsed", "dialect", "connect_args"),
+    [
+        (
+            mysql_database,
+            parsed_mysql(),
+            MysqlDialect(),
+            {"connect_timeout": 5, "read_timeout": 5, "write_timeout": 5},
+        ),
+        (
+            postgres_database,
+            parsed_postgresql(),
+            PostgreSQLDialect(),  # type: ignore[no-untyped-call]
+            {"connect_timeout": 5},
+        ),
+    ],
+)
+def test_list_databases_enforces_connection_and_query_timeouts(
+    monkeypatch: pytest.MonkeyPatch,
+    module: Any,
+    parsed: ParsedDsn,
+    dialect: Any,
+    connect_args: dict[str, int],
+) -> None:
+    connection = FakeConnection(dialect, [("app",)])
+    engine = FakeEngine(connection)
+    create_engine = Mock(return_value=engine)
+    monkeypatch.setattr(database_connection, "create_engine", create_engine)
+
+    assert module.list_databases(parsed, timeout_seconds=5, connect_timeout_seconds=5) == ("app",)
+
+    create_engine.assert_called_once_with(parsed.url, connect_args=connect_args)
+    if parsed.dialect == "mysql":
+        assert "SET SESSION max_execution_time = 5000" in connection.statements
+    else:
+        assert connection.parameters == [{"timeout": "5000ms"}]
     assert engine.disposed
 
 
@@ -261,7 +308,7 @@ def test_management_errors_are_redacted_and_dispose_engines(
     connection = FakeConnection(MysqlDialect())
     connection.error = SQLAlchemyError("mysql+pymysql://admin:secret@db.example/mysql")
     engine = FakeEngine(connection)
-    monkeypatch.setattr(module, "create_engine", lambda _: engine)
+    monkeypatch.setattr(database_connection, "create_engine", lambda *args, **kwargs: engine)
 
     with pytest.raises(DatabaseOperationError, match=expected_error) as error:
         module.list_databases(parsed)

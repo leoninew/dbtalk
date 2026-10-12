@@ -1,8 +1,8 @@
 # Copy this file to backup-db.yaml and fill in the DSNs.
 output_directory: ../data
 target_validation:
-  # Maximum database connection time for each configured connection.
-  connection_timeout_seconds: 10
+  # Maximum connection and query time for test and sync, in seconds.
+  connection_timeout_seconds: 5
 
 connections:
   - name: example

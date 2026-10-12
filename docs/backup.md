@@ -8,6 +8,8 @@
 
 `test` 测试所有已启用的连接，不依赖数据库清单。`sync` 查询已启用连接中的非系统库并更新清单：新增库默认启用，已有库保留设置，已不存在的库移除。新增或移除时每个库一行日志，跳过的连接保留原配置。
 
+`test` 和 `sync` 的连接及查询超时默认均为 5 秒，由 `target_validation.connection_timeout_seconds` 配置。`test --connect-timeout <seconds>` 可覆盖本次测试的超时；测试查询同时受 `database.query_timeout_seconds` 限制，采用两者中较小的值。
+
 在仓库根目录执行：
 
 ```bash
