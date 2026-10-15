@@ -25,6 +25,7 @@ def test_query_keeps_json_on_stdout_and_omits_sql_and_parameters_from_logs() -> 
     result = CliRunner().invoke(
         cli,
         [
+            "-v",
             "query",
             "--dsn",
             "sqlite:///:memory:",
@@ -52,8 +53,8 @@ def test_failed_exec_logs_one_failure_without_sql_or_values(verbose: list[str]) 
     result = CliRunner().invoke(
         cli,
         [
-            "exec",
             *verbose,
+            "exec",
             "--dsn",
             "sqlite:///:memory:",
             "--sql",
@@ -65,9 +66,12 @@ def test_failed_exec_logs_one_failure_without_sql_or_values(verbose: list[str]) 
 
     assert result.exit_code == 1
     assert result.stdout == ""
-    assert result.stderr.count("cli exec started") == 1
-    assert result.stderr.count("cli exec failed") == 1
-    assert "ERROR" in result.stderr
+    assert result.stderr.count("cli exec started") == (1 if verbose else 0)
+    assert result.stderr.count("cli exec failed") == (1 if verbose else 0)
+    if verbose:
+        assert "ERROR" in result.stderr
+    else:
+        assert result.stderr == "Error: database execution failed\n"
     assert "database execution failed" in result.stderr
     assert "completed" not in result.stderr
     for private in (statement, "private_value", "private-input", "[SQL:", "[parameters:"):
@@ -77,7 +81,7 @@ def test_failed_exec_logs_one_failure_without_sql_or_values(verbose: list[str]) 
 def test_dry_run_logs_preview_flag_without_logging_preview_sql() -> None:
     statement = "UPDATE accounts SET password = 'private-password'"
     result = CliRunner().invoke(
-        cli, ["exec", "--dsn", "sqlite:///:memory:", "--sql", statement, "--dry-run"]
+        cli, ["-v", "exec", "--dsn", "sqlite:///:memory:", "--sql", statement, "--dry-run"]
     )
 
     assert result.exit_code == 0, result.output
@@ -107,6 +111,7 @@ def test_drop_logs_target_flags_and_terminal_status_without_credentials(
     result = CliRunner().invoke(
         cli,
         [
+            "-v",
             "postgres",
             "schema",
             "drop",
@@ -145,6 +150,7 @@ def test_password_rotation_logs_role_without_password_or_environment_source(
     result = CliRunner().invoke(
         cli,
         [
+            "-v",
             "postgres",
             "role",
             "password",
@@ -173,6 +179,7 @@ def test_ownership_preview_logs_execution_disabled(monkeypatch: pytest.MonkeyPat
     result = CliRunner().invoke(
         cli,
         [
+            "-v",
             "postgres",
             "owner",
             "reassign",
@@ -210,6 +217,7 @@ def test_postgres_backup_logs_lifecycle(
     result = CliRunner().invoke(
         cli,
         [
+            "-v",
             "postgres",
             command,
             "--dsn",
@@ -229,7 +237,10 @@ def test_postgres_backup_logs_lifecycle(
     assert "private-password" not in result.stderr
 
 
-def test_transfer_retains_one_lifecycle_per_operation(tmp_path: Path) -> None:
+@pytest.mark.parametrize("verbose", [[], ["-v"], ["--verbose"]])
+def test_transfer_logging_is_opt_in_without_duplicate_events(
+    tmp_path: Path, verbose: list[str]
+) -> None:
     source = tmp_path / "source.db"
     target = tmp_path / "target.db"
     archive = tmp_path / "transfer.jsonl"
@@ -244,6 +255,7 @@ def test_transfer_retains_one_lifecycle_per_operation(tmp_path: Path) -> None:
         ("import", target, "--target", "--input"),
     ):
         arguments = [
+            *verbose,
             command,
             direction,
             "sqlite",
@@ -260,21 +272,30 @@ def test_transfer_retains_one_lifecycle_per_operation(tmp_path: Path) -> None:
         )
 
         assert result.exit_code == 0, result.output
-        assert result.stderr.count(f"database {command} started") == 1
-        assert result.stderr.count(f"database {command} completed") == 1
+        assert result.stderr.count(f"database {command} started") == (1 if verbose else 0)
+        assert result.stderr.count(f"database {command} completed") == (1 if verbose else 0)
         assert f"cli {command} started" not in result.stderr
+        if not verbose:
+            assert result.stderr == ""
     with sqlite3.connect(target) as connection:
         assert connection.execute("SELECT id FROM items").fetchall() == [(1,)]
 
 
 def test_logging_respects_format_level_and_verbose_without_duplicate_records() -> None:
     runner = CliRunner()
-    for verbose, expected_lines in (([], 0), (["-v"], 2), ([], 0)):
+    for verbose, level, expected_lines in (
+        ([], "INFO", 0),
+        (["-v"], "INFO", 2),
+        ([], "DEBUG", 0),
+        (["-v"], "WARNING", 0),
+        (["--verbose"], "INFO", 2),
+        ([], "INFO", 0),
+    ):
         result = runner.invoke(
             cli,
-            ["query", *verbose, "--dsn", "sqlite:///:memory:", "--sql", "SELECT 1"],
+            [*verbose, "query", "--dsn", "sqlite:///:memory:", "--sql", "SELECT 1"],
             env={
-                "DBTALK_LOGGING__LEVEL": "WARNING",
+                "DBTALK_LOGGING__LEVEL": level,
                 "DBTALK_LOGGING__FORMAT": "%(levelname)s|%(message)s",
             },
         )
@@ -283,6 +304,36 @@ def test_logging_respects_format_level_and_verbose_without_duplicate_records() -
         lines = result.stderr.splitlines()
         assert len(lines) == expected_lines
         assert all(line.startswith("INFO|cli query ") for line in lines)
+
+
+@pytest.mark.parametrize("verbose", [[], ["-v"]])
+def test_transfer_failure_logs_are_also_opt_in(tmp_path: Path, verbose: list[str]) -> None:
+    archive = tmp_path / "invalid.jsonl"
+    archive.write_text("invalid JSON\n", encoding="utf-8")
+    target = tmp_path / "target.db"
+    target.touch()
+    result = CliRunner().invoke(
+        cli,
+        [
+            *verbose,
+            "import",
+            "--target",
+            "sqlite",
+            "--dsn",
+            sqlite_dsn(target),
+            "--input",
+            str(archive),
+            "--mode",
+            "insert",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "Error: invalid JSONL at line 1" in result.stderr
+    assert result.stderr.count("database import failed") == (1 if verbose else 0)
+    if not verbose:
+        assert result.stderr == "Error: invalid JSONL at line 1\n"
 
 
 def test_dsn_display_omits_sensitive_query_without_changing_connection_url() -> None:

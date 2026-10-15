@@ -69,7 +69,7 @@ uv run dbtalk exec \
   --dry-run
 ```
 
-`query` 使用只读会话，`exec` 使用写会话。叶子命令可加 `-v` 查看清洗后的异常细节。
+`query` 使用只读会话，`exec` 使用写会话。使用 `dbtalk -v <命令>` 或 `dbtalk --verbose <命令>` 可开启 stderr 操作日志和清洗后的异常细节；默认不输出 logging 日志。
 
 Agent 在第一条数据库命令前将 DSN 写入 `.env`。`--dsn-env DBTALK_DSN_*` 优先读取进程环境变量，只有变量不存在时才从当前目录 `.env` 回退读取。
 

@@ -7,6 +7,8 @@ Stage: Verification
 # 命令级 verbose 与 exec 写会话验证
 最后修改时间: 2026-09-08 13:41:53
 
+> 本文保留 2026-09-08 的验证记录。verbose 行为已于 2026-10-15 调整为仅根命令 `dbtalk -v/--verbose` 开启日志与详细错误，子命令不再提供该开关，配置不再开启 verbose；当前约定见[操作日志](../logging.md)。
+
 ## Requirement alignment / 需求对齐
 
 已对照已接受的 `docs/requirement/20260908-cli-verbose-error-details.md` 核对：

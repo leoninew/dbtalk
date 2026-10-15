@@ -7,6 +7,8 @@ Stage: Requirement
 # 命令级 verbose 与 exec 写会话
 最后修改时间: 2026-09-08 13:30:42
 
+> verbose 部分为历史设计，已于 2026-10-15 调整：仅根命令 `dbtalk -v/--verbose` 开启日志与详细错误，子命令不再提供该开关，配置不再开启 verbose。当前约定见[操作日志](../logging.md)；本文的 exec 写会话要求仍适用。
+
 ## Background
 
 当前 CLI 把 SQLAlchemy / 驱动异常包装成稳定、无敏感信息的阶段错误，例如 `Error: database execution failed`。`from error` 保留了原因链，但 Click 只打印包装后的一句话，操作者和 Agent 无法判断是缺表、无权限、SQL 被拒绝，还是连接失败。

@@ -87,7 +87,7 @@ def test_main_invokes_root_command(monkeypatch: MonkeyPatch) -> None:
     assert called
 
 
-def test_verbose_option_is_on_leaf_commands_not_groups() -> None:
+def test_verbose_option_is_only_on_root_command() -> None:
     runner = CliRunner()
     root = runner.invoke(cli, ["--help"])
     mysql = runner.invoke(cli, ["mysql", "--help"])
@@ -96,32 +96,43 @@ def test_verbose_option_is_on_leaf_commands_not_groups() -> None:
     grant_help = runner.invoke(cli, ["mysql", "grant", "--help"])
 
     assert root.exit_code == 0, root.output
-    assert "-v, --verbose" not in root.output
+    assert "-v, --verbose" in root.output
     assert mysql.exit_code == 0, mysql.output
     assert "-v, --verbose" not in mysql.output
     assert exec_help.exit_code == 0, exec_help.output
-    assert "-v, --verbose" in exec_help.output
+    assert "-v, --verbose" not in exec_help.output
     assert "--file" in exec_help.output
     assert "--dry-run" in exec_help.output
     assert "--write" not in exec_help.output
     assert dump_help.exit_code == 0, dump_help.output
-    assert "-v, --verbose" in dump_help.output
+    assert "-v, --verbose" not in dump_help.output
     assert grant_help.exit_code == 0, grant_help.output
-    assert "-v, --verbose" in grant_help.output
+    assert "-v, --verbose" not in grant_help.output
 
 
-def test_leaf_verbose_enables_debug_logging() -> None:
+@pytest.mark.parametrize("option", ["-v", "--verbose"])
+def test_root_verbose_enables_logging(option: str) -> None:
     runner = CliRunner()
     quiet = runner.invoke(cli, ["exec", "--dsn", "sqlite:///:memory:", "--sql", "SELECT 1"])
     assert quiet.exit_code == 0, quiet.output
-    assert logging.getLogger().level == logging.INFO
+    assert quiet.stderr == ""
 
     verbose = runner.invoke(
         cli,
-        ["exec", "-v", "--dsn", "sqlite:///:memory:", "--sql", "SELECT 1"],
+        [option, "exec", "--dsn", "sqlite:///:memory:", "--sql", "SELECT 1"],
     )
     assert verbose.exit_code == 0, verbose.output
-    assert logging.getLogger().level == logging.DEBUG
+    assert logging.getLogger().level == logging.INFO
+    assert "cli exec started" in verbose.stderr
+    assert "cli exec completed" in verbose.stderr
+
+
+@pytest.mark.parametrize("command", [["exec"], ["mysql"], ["mysql", "dump"]])
+def test_subcommands_do_not_accept_verbose(command: list[str]) -> None:
+    result = CliRunner().invoke(cli, [*command, "-v"])
+
+    assert result.exit_code == 2
+    assert "No such option '-v'" in result.stderr
 
 
 def test_sanitize_error_detail_redacts_password_assignments_and_dsn_userinfo() -> None:

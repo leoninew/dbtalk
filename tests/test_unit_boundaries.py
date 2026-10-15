@@ -386,7 +386,6 @@ def test_database_cli_option_guards_and_settings_validation() -> None:
     context = click.Context(click.Command("dbtalk"))
     context.obj = DbtalkContext(
         settings=dbtalk_settings.Settings(
-            verbose=False,
             logging=dbtalk_settings.LoggingSettings(level="INFO", format="%(message)s"),
             mysql=dbtalk_settings.MySQLConfig(
                 output_directory="data",

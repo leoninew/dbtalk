@@ -35,7 +35,6 @@ SPEC.loader.exec_module(backup_db)
 
 def _settings() -> Settings:
     return Settings(
-        verbose=False,
         logging=LoggingSettings(level="INFO", format="%(message)s"),
         mysql=MySQLConfig(
             output_directory="data", client_image="mysql:8.0", zero_datetime_as_null=True

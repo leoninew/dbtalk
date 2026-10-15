@@ -970,8 +970,8 @@ def test_query_and_exec_cli_session_modes_and_timeouts(tmp_path: Path) -> None:
     verbose_query = runner.invoke(
         cli,
         [
-            "query",
             "-v",
+            "query",
             "--dsn",
             dsn,
             "--sql",
@@ -1033,8 +1033,8 @@ def test_exec_verbose_shows_sanitized_exception_details(tmp_path: Path) -> None:
     verbose = runner.invoke(
         cli,
         [
-            "exec",
             "-v",
+            "exec",
             "--dsn",
             dsn,
             "--sql",
@@ -1051,35 +1051,6 @@ def test_exec_verbose_shows_sanitized_exception_details(tmp_path: Path) -> None:
     assert "secret" not in verbose.output
     assert "[parameters:]" not in verbose.output
     assert "[SQL:" not in verbose.output
-
-    root_verbose = runner.invoke(
-        cli,
-        ["-v", "exec", "--dsn", dsn, "--sql", "SELECT 1"],
-    )
-    assert root_verbose.exit_code != 0
-    assert "No such option" in root_verbose.output
-    assert "-v" in root_verbose.output
-
-
-def test_settings_verbose_shows_exception_details_without_command_flag(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "settings-verbose.db"
-    create_database(path)
-    monkeypatch.setenv("DBTALK_VERBOSE", "true")
-    result = CliRunner().invoke(
-        cli,
-        [
-            "exec",
-            "--dsn",
-            f"sqlite:///{path.as_posix()}",
-            "--sql",
-            "UPDATE missing SET name = 1",
-        ],
-    )
-    assert result.exit_code != 0
-    assert "database execution failed" in result.output
-    assert "sqlalchemy.exc.OperationalError" in result.output
 
 
 def test_sqlite_statement_timeout_interrupts_query_and_cleans_up(tmp_path: Path) -> None:

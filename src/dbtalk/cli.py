@@ -21,8 +21,11 @@ CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
     invoke_without_command=True,
 )
 @click.version_option(version=__version__, prog_name="dbtalk")
+@click.option(
+    "-v", "--verbose", is_flag=True, help="Show operation logs and sanitized exception details."
+)
 @click.pass_context
-def cli(ctx: click.Context) -> None:
+def cli(ctx: click.Context, verbose: bool) -> None:
     """Run database backup, restore, transfer, query, and execution operations."""
     try:
         settings = load_settings()
@@ -31,9 +34,9 @@ def cli(ctx: click.Context) -> None:
     configure_logging(
         settings.logging.level,
         settings.logging.format,
-        settings.verbose,
+        verbose,
     )
-    ctx.obj = DbtalkContext(settings=settings, verbose=settings.verbose)
+    ctx.obj = DbtalkContext(settings=settings, verbose=verbose)
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
 

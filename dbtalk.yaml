@@ -1,6 +1,4 @@
 # Defaults. Use DBTALK_* process environment variables for local overrides.
-verbose: false
-
 logging:
   level: INFO
   format: "%(asctime)s %(levelname)s %(name)s: %(message)s"

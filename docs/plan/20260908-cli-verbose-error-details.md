@@ -7,6 +7,8 @@ Stage: Plan
 # 命令级 verbose 与 exec 写会话计划
 最后修改时间: 2026-09-08 13:30:42
 
+> verbose 部分为历史方案，已于 2026-10-15 调整：仅根命令 `dbtalk -v/--verbose` 开启日志与详细错误，子命令不再提供该开关，配置不再开启 verbose。当前实现见[操作日志](../logging.md)；本文的 exec 写会话方案仍适用。
+
 ## Requirement basis
 
 - 已接受的 Requirement：`docs/requirement/20260908-cli-verbose-error-details.md`。

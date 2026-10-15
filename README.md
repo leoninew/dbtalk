@@ -69,7 +69,7 @@ uv run dbtalk exec \
   --dry-run
 ```
 
-`query` is read-only; `exec` runs a write-capable session. Add `-v` on a leaf command to see sanitized exception details.
+`query` is read-only; `exec` runs a write-capable session. Use `dbtalk -v <command>` or `dbtalk --verbose <command>` to enable operation logs on stderr and sanitized exception details. Logging is silent by default.
 
 Agents write the DSN to `.env` before the first database command. `--dsn-env DBTALK_DSN_*` reads the process environment first and only falls back to the current `.env` when that variable is absent.
 

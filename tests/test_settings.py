@@ -10,8 +10,7 @@ from pytest import MonkeyPatch
 
 from dbtalk.settings import DumpRestoreConfig, MySQLConfig, load_settings
 
-DEFAULT_SETTINGS = """verbose: false
-logging:
+DEFAULT_SETTINGS = """logging:
   level: INFO
   format: "%(asctime)s %(levelname)s %(name)s: %(message)s"
 mysql:

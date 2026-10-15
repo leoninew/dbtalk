@@ -39,7 +39,6 @@ class DatabaseTransferConfig:
 
 @dataclass(frozen=True)
 class Settings:
-    verbose: bool
     logging: LoggingSettings
     mysql: MySQLConfig
     database: DatabaseTransferConfig
@@ -66,7 +65,6 @@ def load_settings(project_root: Path | None = None) -> Settings:
         environments=False,
     )
     return Settings(
-        verbose=bool_config(config.get("verbose", False)),
         logging=load_logging_settings(config.get("logging")),
         mysql=load_mysql_config(config.get("mysql")),
         database=load_database_transfer_config(config.get("database")),

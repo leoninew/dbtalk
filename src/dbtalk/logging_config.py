@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import logging
 from logging.config import dictConfig
 
 
 def configure_logging(level: str, log_format: str, verbose: bool) -> None:
-    """Configure process logging once, keeping command output on stdout."""
-    resolved_level: int | str = logging.DEBUG if verbose else level
+    """Enable stderr logging only for an explicitly verbose CLI invocation."""
     dictConfig(
         {
             "version": 1,
@@ -20,7 +18,9 @@ def configure_logging(level: str, log_format: str, verbose: bool) -> None:
                     "formatter": "console",
                     "stream": "ext://sys.stderr",
                 }
+                if verbose
+                else {"class": "logging.NullHandler"}
             },
-            "root": {"level": resolved_level, "handlers": ["console"]},
+            "root": {"level": level, "handlers": ["console"]},
         }
     )
