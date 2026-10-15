@@ -400,6 +400,7 @@ def test_database_cli_option_guards_and_settings_validation() -> None:
                 output_directory="data",
                 client_image="postgres:18-alpine",
             ),
+            session=dbtalk_settings.SessionConfig(poll_interval_seconds=0.1),
         ),
         verbose=False,
     )

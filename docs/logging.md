@@ -13,6 +13,7 @@ dbtalk -v query --dsn-env DBTALK_DSN_APP --sql 'SELECT 1 AS ok' --format json \
 | --- | --- |
 | MySQL/PostgreSQL 建库、删库、账号和权限管理、权限查询 | CLI 边界记录开始、完成或失败，以及库名、账号、权限 profile 等必要字段 |
 | PostgreSQL 所有权转移 | 同上，记录来源/目标 role、database/schema 和 `yes`；`yes=False` 表示仅预览 |
+| MySQL/PostgreSQL `session list/kill` | CLI 记录生命周期、显式 database、session_id、wait_seconds 和 yes；操作函数记录解析后的数据库、选中数量及各目标最终状态 |
 | 通用 `query` / `exec` | CLI 边界记录开始、完成或失败；`exec` 记录 `dry_run` |
 | PostgreSQL dump/restore | CLI 边界记录开始、完成或失败，以及显式指定的目标库、文件和清理选项；Docker 镜像拉取使用 INFO 日志 |
 | MySQL dump/restore | 沿用操作函数中的开始、阶段进度、完成和失败日志 |
@@ -20,6 +21,8 @@ dbtalk -v query --dsn-env DBTALK_DSN_APP --sql 'SELECT 1 AS ok' --format json \
 | `scripts/backup-db.py`、`scripts/install.py` | 沿用脚本入口配置及已有关键过程日志；这些独立脚本的诊断日志写入 stdout |
 
 CLI 通用记录包含命令路径，结束时包含 `elapsed_ms`；删库会记录 `if_exists`、`force` 和 `yes`。MySQL dump/restore 和 JSONL 传输已有过程日志，CLI 不重复生成一组开始/结束日志。`--help` 和进入命令回调前的参数解析错误不生成操作日志。
+
+会话结果中的 `requested` 只表示请求成功返回，`terminated` 表示等待确认原身份消失；部分失败会保留各目标状态并记录命令失败。日志不包含查询文本、绑定身份值或原始数据库异常。会话命令也只接受根命令的 `-v/--verbose`。
 
 `INFO` 记录开始、完成及汇总，`WARNING` 记录取消，`ERROR` 记录操作失败。通用失败日志只记录操作摘要，具体错误继续由 Click 呈现，避免重复输出异常堆栈。完成表示命令成功返回；预览、dry-run 和 `--if-exists` 跳过的操作应结合相应字段与 stdout 判断。
 

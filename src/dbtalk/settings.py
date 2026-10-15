@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -38,11 +39,17 @@ class DatabaseTransferConfig:
 
 
 @dataclass(frozen=True)
+class SessionConfig:
+    poll_interval_seconds: float
+
+
+@dataclass(frozen=True)
 class Settings:
     logging: LoggingSettings
     mysql: MySQLConfig
     database: DatabaseTransferConfig
     postgres: DumpRestoreConfig
+    session: SessionConfig
 
 
 def default_project_root() -> Path:
@@ -69,6 +76,7 @@ def load_settings(project_root: Path | None = None) -> Settings:
         mysql=load_mysql_config(config.get("mysql")),
         database=load_database_transfer_config(config.get("database")),
         postgres=load_dump_restore_config(config.get("postgres"), group="postgres"),
+        session=load_session_config(config.get("session")),
     )
 
 
@@ -165,3 +173,20 @@ def load_positive_seconds(config: Mapping[str, object], key: str) -> int:
     if timeout_seconds <= 0:
         raise ValueError(f"{config_key} must be greater than zero")
     return timeout_seconds
+
+
+def load_session_config(value: Any) -> SessionConfig:
+    config = mapping_config(value, "session")
+    key = "session.poll_interval_seconds"
+    raw = config.get("poll_interval_seconds")
+    if raw is None:
+        raise ValueError(f"{key} must be configured")
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        raise ValueError(f"{key} must be a finite positive number")
+    try:
+        seconds = float(raw)
+    except ValueError as error:
+        raise ValueError(f"{key} must be a finite positive number") from error
+    if not isfinite(seconds) or seconds <= 0:
+        raise ValueError(f"{key} must be a finite positive number")
+    return SessionConfig(poll_interval_seconds=seconds)

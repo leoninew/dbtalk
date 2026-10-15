@@ -19,6 +19,7 @@ from .owner import owner
 from .permissions import permissions
 from .restore import PostgresRestoreOptions, restore_database
 from .role import grant_command, revoke_command, role
+from .session import session
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
@@ -43,6 +44,7 @@ postgres.add_command(grant_command)
 postgres.add_command(revoke_command)
 postgres.add_command(permissions)
 postgres.add_command(owner)
+postgres.add_command(session)
 
 
 @postgres.command("dump", context_settings=CONTEXT_SETTINGS)

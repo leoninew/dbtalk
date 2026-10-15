@@ -17,6 +17,7 @@ logger = logging.getLogger("dbtalk")
 # Never log arbitrary Click parameters: DSNs, SQL, and password sources are private.
 LOGGED_OPTIONS = (
     "name",
+    "database",
     "database_name",
     "target_database",
     "schemas",
@@ -33,6 +34,8 @@ LOGGED_OPTIONS = (
     "dry_run",
     "yes",
     "include_shared",
+    "session_id",
+    "wait_seconds",
     "input",
     "output",
 )

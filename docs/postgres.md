@@ -18,6 +18,7 @@ uv run dbtalk postgres permissions --help
 | `role list/create/enable/disable/password/drop` | 管理 role 生命周期，不授予业务权限。 |
 | `grant` / `revoke` | 按 profile 或原生 `--privilege` 授予、撤销 database/schema 权限。 |
 | `permissions list/show` | 查看当前 DSN 可见的原生授权，可按 role、database、schema 筛选。 |
+| `session list/kill` | 查看或终止一个数据库内的客户端会话，可选择等待退出。 |
 | `owner reassign` | 预览或转移一个 role 在当前库及共享对象上的所有权。 |
 | `owner transfer` | 按 database/schema 预览或转移业务对象所有权，排除系统和扩展对象。 |
 | `dump` / `restore` | 创建或恢复单库 custom archive。 |
@@ -104,6 +105,45 @@ uv run dbtalk postgres schema drop --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT --na
 `drop --if-exists` 使用原生 `DROP DATABASE IF EXISTS`，目标库不存在时也成功，适合 `drop && create` 重置流程；不传该选项时，目标不存在仍会失败。该选项仍要求 `--yes`，仍拒绝删除当前连接库，连接、权限和其他会话占用等错误照常失败。
 
 `drop --force` 使用原生 `WITH (FORCE)`，尝试终止目标库的已有连接后删除，可与 `--if-exists` 组合。该选项会中断目标库的其他会话，仍要求 `--yes`，仍拒绝删除当前连接库。执行账号必须有相应的会话终止权限；预备事务、活跃逻辑复制槽、订阅或无法终止的连接仍可能阻止删除，dbtalk 会报告服务器错误，不逐会话重试或提升权限。参见 [PostgreSQL DROP DATABASE](https://www.postgresql.org/docs/18/sql-dropdatabase.html)。
+
+## 会话管理
+
+`session list` 和 `session kill` 按 `--database > DSN database > 失败` 确定目标。显式参数同时覆盖管理连接的数据库，执行账号必须能连接目标库；两者都没有时在建立连接前失败，包括指定 `--id` 的情况。
+
+以下为 Bash 示例，变量直接声明在命令文件中，替换占位值后执行：
+
+```bash
+export DBTALK_DSN_POSTGRES_ADMIN='postgresql+psycopg://operator:password@127.0.0.1:5432/postgres'
+DBTALK_DATABASE='app'
+DBTALK_SESSION_ID='12345'
+
+dbtalk postgres session list --dsn-env DBTALK_DSN_POSTGRES_ADMIN --database "$DBTALK_DATABASE"
+dbtalk postgres session kill --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
+  --database "$DBTALK_DATABASE" --id "$DBTALK_SESSION_ID" --wait 5 --yes
+# 省略 --id：终止目标库当前匹配的客户端集合
+dbtalk postgres session kill --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
+  --database "$DBTALK_DATABASE" --wait 5 --yes
+```
+
+列表来自 `pg_catalog.pg_stat_activity`，只包含目标库的 `client backend`，排除本次管理连接，按 PID 排序；显示数据库、用户、客户端地址、状态、应用名、连接开始时间和等待事件。空结果为 `(0 rows)`。显式 ID 仍受相同范围限制，不会终止其他库的会话。
+
+发送前复核 PID、`backend_start`、用户和数据库，再调用原生 `pg_terminate_backend`。完整统计信息通常需要超级用户或 `pg_read_all_stats`；终止其他角色的连接需要相应成员资格或 `pg_signal_backend`，超级用户会话另受原生权限限制。身份字段不可见时拒绝盲目终止，命令不会自动授权。
+
+`kill` 必须提供 `--yes`。省略 `--wait` 时不轮询退出，`requested` 仅表示请求成功返回。`--wait SECONDS` 接受有限正数和小数，使用整批共享预算，从发送结束后开始确认原会话身份消失；并非整条命令的硬超时。新建或连接池重连的会话不加入原快照，等待成功也不保证目标库已无连接。
+
+| 状态 | 含义 |
+| --- | --- |
+| `requested` | 请求成功返回，未等待退出。 |
+| `terminated` | 等待确认原身份已消失。 |
+| `gone` | 请求前或发送时确认原目标已经退出。 |
+| `changed` | 发送前身份或范围变化，未向变更后的目标发送。 |
+| `failed` | 权限、请求或身份确认失败；网络故障时请求可能已生效。 |
+| `timeout` | 已请求，但等待预算内未确认退出。 |
+| `not_attempted` | 连接失效后尚未发送的目标。 |
+
+逐目标输出保留部分成功；前三种状态和空批量结果返回 0，其余状态使整条命令返回 1，参数或确认缺失返回 2。显式 ID 未匹配时失败。连接失效后不重连或重发请求；终止会按 PostgreSQL 原生规则中断会话及未提交事务，已发送的请求不能撤销。不提供 `session cancel`。
+
+等待轮询使用必需配置 `session.poll_interval_seconds`，随附 YAML 为 `0.1`，可由 `DBTALK_SESSION__POLL_INTERVAL_SECONDS` 覆盖，加载时集中校验为有限正数。查询和终止响应复用 `database.query_timeout_seconds`、`database.exec_timeout_seconds`；等待查询按剩余预算缩短服务端超时。受驱动与服务端精度限制，不承诺网络故障下严格按秒中断。仅根 `dbtalk -v postgres session ...` 开启日志。
 
 ## Dump
 

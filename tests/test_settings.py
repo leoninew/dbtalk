@@ -20,6 +20,8 @@ mysql:
 database:
   query_timeout_seconds: 30
   exec_timeout_seconds: 30
+session:
+  poll_interval_seconds: 0.1
 postgres:
   output_directory: data
   client_image: postgres:18-alpine

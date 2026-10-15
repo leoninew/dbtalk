@@ -87,6 +87,8 @@ Agents write the DSN to `.env` before the first database command. `--dsn-env DBT
 | `dbtalk postgres owner transfer` | Transfer business objects within database/schema scope, excluding system and extension objects |
 | `dbtalk mysql permissions list/show` | Inspect native MySQL permissions |
 | `dbtalk postgres permissions list/show` | Inspect native PostgreSQL permissions |
+| `dbtalk mysql session list/kill` | List or terminate client sessions in one database |
+| `dbtalk postgres session list/kill` | List or terminate client sessions in one database |
 | `dbtalk mysql dump/restore` | Create or restore MySQL SQL dumps |
 | `dbtalk postgres dump/restore` | Create or restore PostgreSQL custom archives |
 | `dbtalk query/exec` | Query or execute SQL; `exec --file` runs a UTF-8 SQL script |
@@ -104,13 +106,17 @@ mysql+pymysql://user:password@host:3306/app
 postgresql+psycopg://user:password@host:5432/app
 ```
 
-Every command accepts exactly one of `--dsn DSN` or `--dsn-env NAME`; `--dsn` remains available for direct integrations. Agent workflows must plan a `DBTALK_DSN_*` name, write the value to the current `.env`, and use only `--dsn-env`. `.env.local` and other dotenv variants are not loaded. Defaults are in [dbtalk.yaml](dbtalk.yaml) and can be overridden with `DBTALK_` process environment variables.
+Every command accepts exactly one of `--dsn DSN` or `--dsn-env NAME`; `--dsn` remains available for direct integrations. Agent workflows use only `--dsn-env` with a `DBTALK_DSN_*` name. Process variables take precedence over the current `.env`; session examples declare variables directly in the command file. `.env.local` and other dotenv variants are not loaded. Defaults are in [dbtalk.yaml](dbtalk.yaml) and can be overridden with `DBTALK_` process environment variables.
+
+Session commands require a database: `--database` overrides the DSN database and the connection target; missing both fails before connecting. `session kill --yes` targets one `--id` or the current database's matching client sessions. Add `--wait SECONDS` to confirm exit within one shared batch budget; omit it to return after sending requests. Logs require root `dbtalk -v`. See the engine guides for permissions, results, and MySQL's default-database scope.
+
+`session.poll_interval_seconds` is required in custom configuration (bundled value: `0.1`); override it with `DBTALK_SESSION__POLL_INTERVAL_SECONDS`. It must be finite and positive. Session queries and termination requests reuse `database.query_timeout_seconds` and `database.exec_timeout_seconds`.
 
 ## Documentation
 
 - [Database operations](docs/database.md): SQL, JSONL transfer, and DSN conventions
-- [MySQL guide](docs/mysql.md): schemas, users, permissions, dump, and restore
-- [PostgreSQL guide](docs/postgres.md): schemas, roles, permissions, dump, and restore
+- [MySQL guide](docs/mysql.md): schemas, users, permissions, sessions, dump, and restore
+- [PostgreSQL guide](docs/postgres.md): schemas, roles, permissions, sessions, dump, and restore
 - [Batch backups](docs/backup.md): configured backups, database directories, and resume
 - [Operation logs](docs/logging.md): coverage, levels, output streams, and redaction
 

@@ -1,11 +1,11 @@
 ---
 name: dbtalk-postgres
-description: 通过当前目录 `.env` 中的 `DBTALK_DSN_*` 使用 dbtalk postgres 管理 PostgreSQL schema/database、role、profile 授权，或创建和恢复单库 custom archive。
+description: 通过 `DBTALK_DSN_*` 使用 dbtalk postgres 管理 PostgreSQL schema/database、role、profile 授权和客户端会话，或创建和恢复单库 custom archive。
 ---
 
 # dbtalk PostgreSQL
 
-使用 `dbtalk postgres` 管理 PostgreSQL schema/database、role、profile 授权，或处理单个数据库的 native logical dump 和 restore。它创建并消费 `pg_dump --format=custom` archive，不用于 JSONL 数据传输、物理备份、WAL/PITR 或 tablespace。要求发布安装的 `dbtalk` 可执行文件位于 `PATH` 中。
+使用 `dbtalk postgres` 管理 PostgreSQL schema/database、role、profile 授权和客户端会话，或处理单个数据库的 native logical dump 和 restore。它创建并消费 `pg_dump --format=custom` archive，不用于 JSONL 数据传输、物理备份、WAL/PITR 或 tablespace。要求发布安装的 `dbtalk` 可执行文件位于 `PATH` 中。
 
 先确认可用参数：
 
@@ -17,7 +17,7 @@ dbtalk postgres schema --help
 
 ## Agent connection workflow
 
-连接使用 canonical `postgresql+psycopg://user:password@host:5432/database`；database path 可省略。CLI 兼容 `--dsn DSN` 与 `--dsn-env NAME` 二选一，但**代理执行时只可使用 `--dsn-env`，绝不传 `--dsn`**。拿到 DSN 后，在第一条 `dbtalk postgres` 命令前按操作范围写入并复用当前目录 `.env` 中的 `DBTALK_DSN_APP`（dump 或 restore）、`DBTALK_DSN_POSTGRES_MANAGEMENT`（schema）或 `DBTALK_DSN_POSTGRES_ADMIN`（role、grant、revoke、permissions）。不得使用 `export`、内联环境变量赋值或 PowerShell `$env:` 为 DSN 赋值。
+连接使用 canonical `postgresql+psycopg://user:password@host:5432/database`；database path 可省略。CLI 兼容 `--dsn DSN` 与 `--dsn-env NAME` 二选一，但**代理执行时只可使用 `--dsn-env`，绝不传 `--dsn`**。按操作范围复用 `DBTALK_DSN_APP`（dump 或 restore）、`DBTALK_DSN_POSTGRES_MANAGEMENT`（schema）或 `DBTALK_DSN_POSTGRES_ADMIN`（role、grant、revoke、permissions、session）。可引用已有当前目录 `.env`；用户要求在命令文件中直接声明变量时，使用进程环境变量，不新建 dotenv、不覆盖已有密码。
 
 对于 `--dsn-env DBTALK_DSN_*`，dbtalk 优先使用同名进程环境变量；变量不存在时才读取当前工作目录 `.env` 的同名值。进程变量存在但为空会失败而不回退；非 `DBTALK_DSN_*` 名称不读取 dotenv，且 CLI 不加载 `.env.local`、其他 dotenv 变体或父目录 dotenv 文件。不得猜测凭据，也不得将实际 DSN 写入 `.env.example`、命令行、日志、skill 或 archive 文件名：
 
@@ -47,6 +47,27 @@ dbtalk postgres schema drop --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT --name app_
 `schema drop --if-exists` 使用原生 `DROP DATABASE IF EXISTS`，仅忽略目标库不存在；默认不忽略。该选项仍要求删除授权和 `--yes`，仍拒绝删除当前连接库，连接、权限和其他会话占用等错误照常失败。
 
 `schema drop --force` 使用原生 `WITH (FORCE)` 尝试终止目标库已有连接后删除，可与 `--if-exists` 组合。只有用户授权删除目标并处理中断其占用连接时才使用，仍要求 `--yes`，仍拒绝删除当前连接库。会话终止权限不足、预备事务、活跃逻辑复制槽或订阅仍可能导致失败；如实报告，不自动提权、逐会话终止或重试。该选项仅属于 PostgreSQL `schema drop`。
+
+## Session management
+
+先用 `session list` 核对目标。两条命令均按 `--database > DSN database > 失败` 解析；显式参数同时覆盖连接数据库，账号必须能连接目标库。即使指定 `--id`，也必须具有目标数据库。列表只含目标库的普通客户端，排除自身及系统进程，空结果为 `(0 rows)`。
+
+以下 Bash 示例在文件内声明变量，不创建 `.env`；只使用用户提供的连接值：
+
+```bash
+export DBTALK_DSN_POSTGRES_ADMIN='postgresql+psycopg://operator:password@127.0.0.1:5432/postgres'
+DBTALK_DATABASE='app'
+DBTALK_SESSION_ID='12345'
+dbtalk postgres session list --dsn-env DBTALK_DSN_POSTGRES_ADMIN --database "$DBTALK_DATABASE"
+dbtalk postgres session kill --dsn-env DBTALK_DSN_POSTGRES_ADMIN \
+  --database "$DBTALK_DATABASE" --id "$DBTALK_SESSION_ID" --wait 5 --yes
+```
+
+只有用户授权中断目标连接时才传 `--yes`；省略 `--id` 会处理目标库快照内全部匹配客户端，单 ID 也不能跨库。发送前复核 PID、连接开始时间、用户和范围。完整统计信息通常需要超级用户或 `pg_read_all_stats`；终止其他角色需要成员资格或 `pg_signal_backend`，超级用户会话另受原生限制，身份不可见时拒绝盲目终止。不自动 GRANT、提权或重试。
+
+省略 `--wait` 不轮询，`requested` 仅表示请求返回；可选有限正数 `--wait SECONDS` 使用整批共享的退出确认预算，确认原身份消失才是 `terminated`；`gone` 表示原目标已先行退出。`changed`、`failed`、`timeout`、`not_attempted` 会保留逐目标结果并返回失败；空批量成功，显式 ID 未匹配失败。连接失效不重连或重发，不将部分成功报告成整批成功。
+
+轮询由必需配置 `session.poll_interval_seconds` 控制（随附 YAML 为 `0.1`，可用 `DBTALK_SESSION__POLL_INTERVAL_SECONDS` 覆盖）；查询与执行超时复用 `database.query_timeout_seconds`、`database.exec_timeout_seconds`。等待不限制整条命令墙钟时间，也不保证连接池不重连或库内已无连接。终止会中断会话及其未提交事务；请求不可撤销。不提供 `session cancel`；日志仅用根 `dbtalk -v postgres session ...` 开启。
 
 ## Dump
 

@@ -1,11 +1,11 @@
 ---
 name: dbtalk-mysql
-description: 通过当前目录 `.env` 中的 `DBTALK_DSN_*` 使用 dbtalk mysql 管理 MySQL schema/database、user、profile 授权，或导出和恢复 mysqldump SQL 文件。
+description: 通过 `DBTALK_DSN_*` 使用 dbtalk mysql 管理 MySQL schema/database、user、profile 授权和客户端会话，或导出和恢复 mysqldump SQL 文件。
 ---
 
 # dbtalk MySQL
 
-使用 `dbtalk mysql` 管理 MySQL schema/database、user、profile 授权，或处理原生 SQL dump 和 restore。要求发布安装的 `dbtalk` 可执行文件位于 `PATH` 中。
+使用 `dbtalk mysql` 管理 MySQL schema/database、user、profile 授权和客户端会话，或处理原生 SQL dump 和 restore。要求发布安装的 `dbtalk` 可执行文件位于 `PATH` 中。
 
 ## Dump 执行语义
 
@@ -19,7 +19,7 @@ DSN 的 host 从当前执行机解释。`localhost` 或 `127.0.0.1` 指向当前
 
 从项目根目录的 `dbtalk.yaml` 读取默认配置，并可由 `DBTALK_*` 进程环境变量覆盖；CLI 不加载 `.env.local`、其他 dotenv 变体或父目录 dotenv 文件。CLI 兼容 canonical `--dsn DSN` 与 `--dsn-env NAME` 二选一，但**代理执行时只可使用 `--dsn-env`，绝不传 `--dsn`**，也不使用 host、port、user、password、database 分散参数。
 
-拿到 DSN 后，在第一条 `dbtalk mysql` 命令前按权限范围把 DSN 写入当前目录 `.env`：`DBTALK_DSN_APP`（应用、dump 或 restore）、`DBTALK_DSN_MYSQL_MANAGEMENT`（schema）或 `DBTALK_DSN_MYSQL_ADMIN`（user、grant、revoke、permissions）。在整个任务中复用对应名称。不得使用 `export`、内联环境变量赋值或 PowerShell `$env:` 为 DSN 赋值。
+按权限范围复用 `DBTALK_DSN_APP`（应用、dump 或 restore）、`DBTALK_DSN_MYSQL_MANAGEMENT`（schema）或 `DBTALK_DSN_MYSQL_ADMIN`（user、grant、revoke、permissions、session）。可引用已有当前目录 `.env`；用户要求在命令文件中直接声明变量时，使用进程环境变量，不新建 dotenv、不覆盖已有密码。
 
 `--dsn-env DBTALK_DSN_*` 优先读取同名进程环境变量；变量不存在时才读取当前目录 `.env`。进程变量存在但为空会失败而不回退；非 `DBTALK_DSN_*` 名称不读取 dotenv。不得猜测凭据，也不得将实际 DSN 写入 `.env.example`、命令行、日志或文档：
 
@@ -44,6 +44,31 @@ dbtalk mysql schema drop --dsn-env DBTALK_DSN_MYSQL_MANAGEMENT --name app_db --i
 先执行 `list` 核对目标。创建后只报告数据库名。删除不可逆，只有用户明确授权删除指定目标时才传入 `--yes`；不能删除当前会话正在连接的数据库。不猜测目标、不执行任意 SQL、不创建或管理账号。
 
 `schema drop --if-exists` 使用原生 `DROP DATABASE IF EXISTS`，仅忽略目标库不存在；默认不忽略。该选项仍要求删除授权和 `--yes`，仍拒绝删除当前连接库，连接、权限等其他错误照常失败。
+
+## Session management
+
+先用 `session list` 核对目标。两条命令均按 `--database > DSN database > 失败` 解析；显式参数同时覆盖连接数据库，账号必须能访问目标库。即使指定 `--id`，也必须具有目标数据库。
+
+以下 Bash 示例在文件内声明变量，不创建 `.env`；只使用用户提供的连接值：
+
+```bash
+export DBTALK_DSN_MYSQL_ADMIN='mysql+pymysql://operator:password@127.0.0.1:3306/mysql'
+DBTALK_DATABASE='app'
+DBTALK_SESSION_ID='12345'
+dbtalk mysql session list --dsn-env DBTALK_DSN_MYSQL_ADMIN --database "$DBTALK_DATABASE"
+dbtalk mysql session kill --dsn-env DBTALK_DSN_MYSQL_ADMIN \
+  --database "$DBTALK_DATABASE" --id "$DBTALK_SESSION_ID" --wait 5 --yes
+```
+
+列表来自 `performance_schema.threads`，只含默认库匹配的普通前台客户端，排除自身及明确系统 / 复制线程，空结果为 `(0 rows)`。默认数据库不代表访问范围：默认库不同、以全限定表名访问目标库的连接不会列入。不能由空结果断言无访问者或锁持有者。
+
+要求启用 Performance Schema 并具有 threads 表 SELECT 权限；该表不按 PROCESS 权限过滤其他用户行。源未启用、不可读或自身身份不可见会明确失败。终止其他账号需要 `CONNECTION_ADMIN`，`SYSTEM_USER` 账号还有原生限制。不自动授权或使用备用数据源。
+
+只有用户授权中断目标连接时才传 `--yes`；省略 `--id` 会处理目标库快照内全部匹配客户端，单 ID 也不能跨库。`--id` 使用连接 ID，内部 THREAD_ID 只用于身份复核，不传给 KILL。发送前数据库或身份变化会跳过；等待时切库不视作退出。原生 KILL 仅接受连接 ID，复核与发送间仍可能发生竞争。
+
+省略 `--wait` 不轮询，`requested` 仅表示请求返回；可选有限正数 `--wait SECONDS` 使用整批共享的退出确认预算，确认原身份消失才是 `terminated`；`gone` 表示原目标已先行退出。`changed`、`failed`、`timeout`、`not_attempted` 会保留逐目标结果并返回失败；空批量成功，显式 ID 未匹配失败。连接失效不重连或重发。
+
+轮询由必需配置 `session.poll_interval_seconds` 控制（随附 YAML 为 `0.1`，可用 `DBTALK_SESSION__POLL_INTERVAL_SECONDS` 覆盖）；查询与执行超时复用 `database.query_timeout_seconds`、`database.exec_timeout_seconds`。等待不限制整条命令墙钟时间，也不保证连接池不重连。终止会话会回滚事务表的未提交事务，非事务影响不保证撤销。不提供 `session cancel`；日志仅用根 `dbtalk -v mysql session ...` 开启。
 
 ## Dump
 

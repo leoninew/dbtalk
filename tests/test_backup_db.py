@@ -21,6 +21,7 @@ from dbtalk.settings import (
     DumpRestoreConfig,
     LoggingSettings,
     MySQLConfig,
+    SessionConfig,
     Settings,
 )
 
@@ -41,6 +42,7 @@ def _settings() -> Settings:
         ),
         database=DatabaseTransferConfig(query_timeout_seconds=30, exec_timeout_seconds=30),
         postgres=DumpRestoreConfig(output_directory="data", client_image="postgres:18"),
+        session=SessionConfig(poll_interval_seconds=0.1),
     )
 
 

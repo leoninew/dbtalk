@@ -87,6 +87,8 @@ Agent 在第一条数据库命令前将 DSN 写入 `.env`。`--dsn-env DBTALK_DS
 | `dbtalk postgres owner transfer` | 按数据库/schema 转移业务对象所有权，排除系统和扩展对象 |
 | `dbtalk mysql permissions list/show` | 查看 MySQL 原生权限 |
 | `dbtalk postgres permissions list/show` | 查看 PostgreSQL 原生权限 |
+| `dbtalk mysql session list/kill` | 查看或终止指定数据库的客户端会话 |
+| `dbtalk postgres session list/kill` | 查看或终止指定数据库的客户端会话 |
 | `dbtalk mysql dump/restore` | 处理 MySQL SQL dump |
 | `dbtalk postgres dump/restore` | 处理 PostgreSQL custom archive |
 | `dbtalk query/exec` | 查询或执行 SQL；`exec --file` 执行 UTF-8 SQL 脚本 |
@@ -104,13 +106,17 @@ mysql+pymysql://user:password@host:3306/app
 postgresql+psycopg://user:password@host:5432/app
 ```
 
-每个命令必须在 `--dsn DSN` 和 `--dsn-env NAME` 中选择一个；`--dsn` 保留给直接集成。Agent 必须先规划 `DBTALK_DSN_*` 名称，将 DSN 写入当前目录 `.env`，随后只使用 `--dsn-env`。不会加载 `.env.local` 或其他 dotenv 变体。默认配置位于 [dbtalk.yaml](dbtalk.yaml)，可使用 `DBTALK_` 前缀的进程环境变量覆盖。
+每个命令必须在 `--dsn DSN` 和 `--dsn-env NAME` 中选择一个；`--dsn` 保留给直接集成。Agent 只使用 `--dsn-env` 引用 `DBTALK_DSN_*` 名称，优先读取进程变量，缺失时才读取当前目录 `.env`；会话示例直接在命令文件声明变量。不会加载 `.env.local` 或其他 dotenv 变体。默认配置位于 [dbtalk.yaml](dbtalk.yaml)，可使用 `DBTALK_` 前缀的进程环境变量覆盖。
+
+会话命令按 `--database > DSN database > 失败` 解析数据库，显式参数同时覆盖连接库；两者均缺失时在连接前失败。`session kill --yes` 终止一个 `--id` 或目标库当前匹配的客户端会话；可选 `--wait SECONDS` 以整批共享预算确认退出，省略时发送请求后返回。日志由根命令 `dbtalk -v` 开启。权限、结果状态和 MySQL 默认库范围见各引擎手册。
+
+自定义完整配置必须包含 `session.poll_interval_seconds`（随附 YAML 值为 `0.1`），可用 `DBTALK_SESSION__POLL_INTERVAL_SECONDS` 覆盖，必须为有限正数。会话查询与终止请求复用 `database.query_timeout_seconds`、`database.exec_timeout_seconds`。
 
 ## 文档
 
 - [数据库操作](docs/database.md)：SQL、JSONL 导入导出和 DSN 约定
-- [MySQL 手册](docs/mysql.md)：schema、用户、权限、dump 和 restore
-- [PostgreSQL 手册](docs/postgres.md)：schema、role、权限、dump 和 restore
+- [MySQL 手册](docs/mysql.md)：schema、用户、权限、会话、dump 和 restore
+- [PostgreSQL 手册](docs/postgres.md)：schema、role、权限、会话、dump 和 restore
 - [批量备份](docs/backup.md)：备份配置、按数据库组织目录和续跑
 - [操作日志](docs/logging.md)：记录范围、日志级别、输出流和脱敏边界
 
