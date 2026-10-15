@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 import tempfile
 import unittest
+from collections.abc import Callable
+from contextlib import closing
 from datetime import UTC
 from itertools import count
 from pathlib import Path
@@ -12,7 +13,6 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from dbtalk.database import sqlalchemy_transfer as adapter
-from dbtalk.database.dsn import sqlite_dsn
 from dbtalk.database.format import TRANSFER_FORMAT, write_document
 from dbtalk.database.transfer import (
     ColumnDefinition,
@@ -27,20 +27,21 @@ from dbtalk.database.transfer import (
     export_database,
     import_database,
 )
+from tests.sqlite_helpers import MemoryDatabase, memory_database
 
 
 class DatabaseTransferLoggingTests(unittest.TestCase):
     def test_sqlite_export_logs_task_schema_table_and_completion(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = root / "source.db"
+            source = self.enterContext(memory_database())
             output = root / "transfer.jsonl"
             self._create_database(source, "source")
 
             with self.assertLogs("dbtalk", level="INFO") as captured:
                 export_database(
                     ExportOptions(
-                        TransferConnection("sqlite", dsn=sqlite_dsn(source)),
+                        TransferConnection("sqlite", dsn=source.dsn),
                         output,
                         ZoneInfo("UTC"),
                     )
@@ -59,14 +60,14 @@ class DatabaseTransferLoggingTests(unittest.TestCase):
     def test_sqlite_import_logs_document_preflight_table_and_completion(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = root / "source.db"
-            target = root / "target.db"
+            source = self.enterContext(memory_database())
+            target = self.enterContext(memory_database())
             output = root / "transfer.jsonl"
             self._create_database(source, "source")
             self._create_database(target, "target")
             export_database(
                 ExportOptions(
-                    TransferConnection("sqlite", dsn=sqlite_dsn(source)),
+                    TransferConnection("sqlite", dsn=source.dsn),
                     output,
                     ZoneInfo("UTC"),
                 )
@@ -75,7 +76,7 @@ class DatabaseTransferLoggingTests(unittest.TestCase):
             with self.assertLogs("dbtalk", level="INFO") as captured:
                 import_database(
                     ImportOptions(
-                        TransferConnection("sqlite", dsn=sqlite_dsn(target)),
+                        TransferConnection("sqlite", dsn=target.dsn),
                         output,
                         "upsert",
                         ZoneInfo("UTC"),
@@ -94,8 +95,8 @@ class DatabaseTransferLoggingTests(unittest.TestCase):
             self.assertIn("status=committed", messages)
 
     @staticmethod
-    def _create_database(path: Path, value: str) -> None:
-        connection = sqlite3.connect(path)
+    def _create_database(database: MemoryDatabase, value: str) -> None:
+        connection = database.connect()
         connection.execute("CREATE TABLE items(id INTEGER PRIMARY KEY, value TEXT)")
         connection.execute("INSERT INTO items VALUES (1, ?)", (value,))
         connection.commit()
@@ -103,10 +104,13 @@ class DatabaseTransferLoggingTests(unittest.TestCase):
 
 
 def test_import_progress_interval_and_committed_input_counts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    sqlite_database: Callable[[], MemoryDatabase],
 ) -> None:
-    target = tmp_path / "target.db"
-    with sqlite3.connect(target) as connection:
+    target = sqlite_database()
+    with closing(target.connect()) as connection:
         connection.execute("CREATE TABLE items(id INTEGER PRIMARY KEY)")
     path = tmp_path / "transfer.jsonl"
     write_document(
@@ -127,7 +131,7 @@ def test_import_progress_interval_and_committed_input_counts(
 
     with caplog.at_level(logging.INFO, logger="dbtalk"):
         import_database(
-            ImportOptions(TransferConnection("sqlite", dsn=sqlite_dsn(target)), path, "upsert", UTC)
+            ImportOptions(TransferConnection("sqlite", dsn=target.dsn), path, "upsert", UTC)
         )
 
     progress = [message for message in caplog.messages if "database import progress" in message]
@@ -136,15 +140,18 @@ def test_import_progress_interval_and_committed_input_counts(
     assert "rows_per_second=0.80 elapsed_seconds=5.00 status=pending" in progress[0]
     assert "executed_rows=5 total_rows=5 pending_rows=0 committed_rows=5" in progress[1]
     assert "status=committed" in progress[1]
-    with sqlite3.connect(target) as connection:
+    with closing(target.connect()) as connection:
         assert connection.execute("SELECT COUNT(*) FROM items").fetchone() == (3,)
 
 
 def test_multiple_batches_roll_back_table_and_keep_previous_commit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    sqlite_database: Callable[[], MemoryDatabase],
 ) -> None:
-    target = tmp_path / "target.db"
-    with sqlite3.connect(target) as connection:
+    target = sqlite_database()
+    with closing(target.connect()) as connection:
         connection.executescript(
             "CREATE TABLE a_kept(id INTEGER PRIMARY KEY);"
             "CREATE TABLE z_items(id INTEGER PRIMARY KEY);"
@@ -175,14 +182,14 @@ def test_multiple_batches_roll_back_table_and_keep_previous_commit(
         pytest.raises(DatabaseTransferError, match="z_items"),
     ):
         import_database(
-            ImportOptions(TransferConnection("sqlite", dsn=sqlite_dsn(target)), path, "insert", UTC)
+            ImportOptions(TransferConnection("sqlite", dsn=target.dsn), path, "insert", UTC)
         )
 
     progress = [message for message in caplog.messages if "database import progress" in message]
     assert "executed_rows=4 total_rows=5 pending_rows=4 committed_rows=1" in progress[-2]
     assert "executed_rows=4 total_rows=5 pending_rows=0 committed_rows=1" in progress[-1]
     assert "status=rolled_back" in progress[-1]
-    with sqlite3.connect(target) as connection:
+    with closing(target.connect()) as connection:
         assert connection.execute("SELECT id FROM a_kept").fetchall() == [(9,)]
         assert connection.execute("SELECT id FROM z_items").fetchall() == []
 

@@ -78,7 +78,7 @@ JSONL v1 使用有序记录，UTF-8 且每行一个 JSON object：
 
 - `src/dbtalk/database/cli.py`、`transfer.py`、`models.py`、`format.py`、`schema.py`、`sqlite.py` 与 `mysql.py`。
 - `src/dbtalk/cli.py`、`pyproject.toml`、`uv.lock`。
-- `tests/test_database_transfer.py`、`tests/test_database_transfer_contract.py`、`tests/test_database_transfer_logging.py` 及必要的 settings/CLI 测试。
+- `tests/test_database_transfer.py`、`tests/test_cli.py`、`tests/test_database_transfer_logging.py` 及必要的 settings 测试。
 - `README.md`、`docs/database.md`、`docs/mysql.md`。
 - `plugins/dbtalk/skills/database/SKILL.md` 和必要的 plugin metadata。
 - `docs/requirement/20260819-jsonl-database-transfer.md`、本 Plan，后续 Verification 文档。

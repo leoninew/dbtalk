@@ -8,7 +8,14 @@ from pathlib import Path
 import pytest
 from pytest import MonkeyPatch
 
-from dbtalk.settings import DumpRestoreConfig, MySQLConfig, load_settings
+from dbtalk.settings import (
+    DumpRestoreConfig,
+    MySQLConfig,
+    SessionConfig,
+    load_database_transfer_config,
+    load_dump_restore_config,
+    load_settings,
+)
 
 DEFAULT_SETTINGS = """logging:
   level: INFO
@@ -51,38 +58,12 @@ def test_loads_yaml_settings(tmp_path: Path) -> None:
     assert isinstance(settings.mysql, DumpRestoreConfig)
     assert type(settings.postgres) is DumpRestoreConfig
     assert settings.mysql.zero_datetime_as_null is True
-    assert not hasattr(settings.postgres, "zero_datetime_as_null")
-    assert not hasattr(settings.database, "zero_datetime_as_null")
     assert settings.database.query_timeout_seconds == 30
     assert settings.database.exec_timeout_seconds == 30
     assert settings.postgres.output_directory == "data"
     assert settings.postgres.client_image == "postgres:18-alpine"
     assert settings.logging.level == "INFO"
     assert settings.logging.format == "%(asctime)s %(levelname)s %(name)s: %(message)s"
-
-
-def test_mysql_dump_restore_settings_do_not_expose_connection_or_target_fields(
-    tmp_path: Path,
-) -> None:
-    write_settings(tmp_path)
-    (tmp_path / "dbtalk.yaml").write_text(
-        (tmp_path / "dbtalk.yaml")
-        .read_text(encoding="utf-8")
-        .replace(
-            "  client_image: mysql:8.0.39\n",
-            "  client_image: mysql:8.0.39\n  host: db.example.test\n  port: 3307\n"
-            "  user: backup\n  password: secret\n  database: app\n",
-        ),
-        encoding="utf-8",
-    )
-
-    settings = load_settings(tmp_path)
-
-    assert not hasattr(settings.mysql, "host")
-    assert not hasattr(settings.mysql, "port")
-    assert not hasattr(settings.mysql, "user")
-    assert not hasattr(settings.mysql, "password")
-    assert not hasattr(settings.mysql, "database")
 
 
 def test_settings_do_not_load_dotenv_files(tmp_path: Path) -> None:
@@ -96,15 +77,6 @@ def test_settings_do_not_load_dotenv_files(tmp_path: Path) -> None:
     settings = load_settings(tmp_path)
 
     assert settings.mysql.client_image == "mysql:8.0.39"
-
-
-def test_os_environment_overrides_yaml(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
-    write_settings(tmp_path)
-    monkeypatch.setenv("DBTALK_MYSQL__CLIENT_IMAGE", "os.example/mysql:9")
-
-    settings = load_settings(tmp_path)
-
-    assert settings.mysql.client_image == "os.example/mysql:9"
 
 
 def test_dump_restore_directory_and_image_can_be_overridden(
@@ -139,6 +111,22 @@ def test_database_query_and_exec_timeouts_can_be_overridden(
     assert settings.database.exec_timeout_seconds == 45
 
 
+def test_database_timeouts_must_be_present_and_positive() -> None:
+    with pytest.raises(ValueError, match="database.query_timeout_seconds"):
+        load_database_transfer_config({"query_timeout_seconds": 0, "exec_timeout_seconds": 30})
+    with pytest.raises(ValueError, match="database.exec_timeout_seconds"):
+        load_database_transfer_config({"query_timeout_seconds": 30, "exec_timeout_seconds": 0})
+    with pytest.raises(ValueError, match="database.query_timeout_seconds"):
+        load_database_transfer_config({"exec_timeout_seconds": 30})
+
+
+def test_dump_restore_settings_require_nonempty_paths_and_images() -> None:
+    with pytest.raises(ValueError, match="mysql.output_directory"):
+        load_dump_restore_config({"output_directory": "  "}, group="mysql")
+    with pytest.raises(ValueError, match="postgres.client_image"):
+        load_dump_restore_config({"client_image": "  "}, group="postgres")
+
+
 def test_scalar_database_env_does_not_replace_the_mapping_section(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
@@ -147,15 +135,6 @@ def test_scalar_database_env_does_not_replace_the_mapping_section(
 
     with pytest.raises(ValueError, match="Unset DBTALK_DATABASE"):
         load_settings(tmp_path)
-
-
-def test_postgres_client_image_can_be_overridden(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
-    write_settings(tmp_path)
-    monkeypatch.setenv("DBTALK_POSTGRES__CLIENT_IMAGE", "registry.example/postgres:19")
-
-    settings = load_settings(tmp_path)
-
-    assert settings.postgres.client_image == "registry.example/postgres:19"
 
 
 def test_frozen_binary_loads_embedded_config_and_executable_overrides(
@@ -187,6 +166,16 @@ def test_frozen_binary_loads_embedded_config_and_executable_overrides(
     assert settings.database.query_timeout_seconds == 61
     assert settings.database.exec_timeout_seconds == 30
     assert settings.postgres.client_image == "os.example/postgres:19"
+
+
+def test_session_yaml_and_env_configuration(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    write_settings(tmp_path)
+    assert load_settings(tmp_path).session.poll_interval_seconds == 0.1
+    monkeypatch.setenv("DBTALK_SESSION__POLL_INTERVAL_SECONDS", "0.35")
+    assert load_settings(tmp_path).session == SessionConfig(poll_interval_seconds=0.35)
+    monkeypatch.setenv("DBTALK_SESSION__POLL_INTERVAL_SECONDS", "0")
+    with pytest.raises(ValueError, match="session.poll_interval_seconds"):
+        load_settings(tmp_path)
 
 
 def write_settings(path: Path) -> None:

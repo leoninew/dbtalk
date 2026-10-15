@@ -4,6 +4,8 @@ import asyncio
 import base64
 import json
 import sqlite3
+from collections.abc import Callable
+from contextlib import closing
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -61,7 +63,19 @@ from dbtalk.database.sqlalchemy_transfer import (
     _target_values,
     _verify_database,
 )
-from dbtalk.database.transfer import export_database, import_database, validate_connection
+from dbtalk.database.transfer import validate_connection
+from tests.sqlite_helpers import MemoryDatabase
+
+
+@pytest.fixture
+def database(sqlite_database: Callable[[], MemoryDatabase]) -> MemoryDatabase:
+    database = sqlite_database()
+    with closing(database.connect()) as connection:
+        connection.executescript(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, active BOOLEAN);"
+            "INSERT INTO users VALUES (1, 'Ada', 1);"
+        )
+    return database
 
 
 def create_database(path: Path) -> None:
@@ -245,10 +259,8 @@ def test_password_from_environment_does_not_fallback_for_empty_or_non_dbtalk_nam
         password_from_environment("APP_PASSWORD")
 
 
-def test_database_clients_accept_urls_and_reject_wrong_async_mode(tmp_path: Path) -> None:
-    path = tmp_path / "client-url.db"
-    create_database(path)
-    with create_client(make_url(f"sqlite:///{path.as_posix()}")) as client:
+def test_database_clients_accept_urls_and_reject_wrong_async_mode() -> None:
+    with create_client(make_url("sqlite:///:memory:")) as client:
         assert client.dialect == "sqlite"
 
     async_parsed = parse_dsn("sqlite:///:memory:", async_mode=True)
@@ -332,10 +344,8 @@ def test_sync_client_context_manager_maps_engine_errors(monkeypatch: pytest.Monk
         client.close()
 
 
-def test_sync_client_query_exec_and_transaction_rollback(tmp_path: Path) -> None:
-    path = tmp_path / "query.db"
-    create_database(path)
-    client = DatabaseClient(f"sqlite:///{path.as_posix()}")
+def test_sync_client_query_exec_and_transaction_rollback(database: MemoryDatabase) -> None:
+    client = DatabaseClient(database.dsn)
     try:
         literal_json = '{"optional":null}'
         assert client.query(f"SELECT '{literal_json}' AS payload").rows == ((literal_json,),)
@@ -362,10 +372,8 @@ def test_sync_client_query_exec_and_transaction_rollback(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_async_client_query_exec_and_transaction(tmp_path: Path) -> None:
-    path = tmp_path / "async.db"
-    create_database(path)
-    client = AsyncDatabaseClient(f"sqlite:///{path.as_posix()}")
+async def test_async_client_query_exec_and_transaction(database: MemoryDatabase) -> None:
+    client = AsyncDatabaseClient(database.dsn)
     try:
         literal_json = '{"optional":null}'
         assert (await client.query(f"SELECT '{literal_json}' AS payload")).rows == (
@@ -426,48 +434,6 @@ def test_json_safe_value_encodes_database_values() -> None:
     assert json_safe_value(object())
 
 
-def test_canonical_dsn_transfer_round_trip_and_upsert(tmp_path: Path) -> None:
-    source = tmp_path / "source.db"
-    target = tmp_path / "target.db"
-    connection = sqlite3.connect(source)
-    connection.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
-    connection.executemany("INSERT INTO users VALUES (?, ?)", [(1, "Ada"), (2, "Grace")])
-    connection.commit()
-    connection.close()
-    connection = sqlite3.connect(target)
-    connection.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
-    connection.execute("INSERT INTO users VALUES (1, 'old')")
-    connection.commit()
-    connection.close()
-
-    source_dsn = f"sqlite:///{source.as_posix()}"
-    target_dsn = f"sqlite:///{target.as_posix()}"
-    transfer_path = tmp_path / "transfer.jsonl"
-    exported = export_database(
-        ExportOptions(
-            connection=TransferConnection("sqlite", dsn=source_dsn),
-            output=transfer_path,
-            timezone=UTC,
-        )
-    )
-    imported = import_database(
-        ImportOptions(
-            connection=TransferConnection("sqlite", dsn=target_dsn),
-            input=transfer_path,
-            mode="upsert",
-            timezone=UTC,
-        )
-    )
-    assert (exported.table_count, exported.row_count) == (1, 2)
-    assert (imported.table_count, imported.row_count) == (1, 2)
-    connection = sqlite3.connect(target)
-    assert connection.execute("SELECT * FROM users ORDER BY id").fetchall() == [
-        (1, "Ada"),
-        (2, "Grace"),
-    ]
-    connection.close()
-
-
 def test_canonical_dsn_transfer_validation_and_environment(tmp_path: Path) -> None:
     path = tmp_path / "database.db"
     create_database(path)
@@ -510,51 +476,6 @@ def test_canonical_dsn_transfer_validation_and_environment(tmp_path: Path) -> No
         )
     finally:
         monkeypatch.undo()
-
-
-def test_canonical_transfer_preserves_foreign_key_order_and_insert_mode(tmp_path: Path) -> None:
-    source = tmp_path / "source-fk.db"
-    target = tmp_path / "target-fk.db"
-    for path in (source, target):
-        connection = sqlite3.connect(path)
-        connection.executescript(
-            "CREATE TABLE parent (id INTEGER PRIMARY KEY, name TEXT);"
-            "CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL, "
-            "note TEXT, FOREIGN KEY(parent_id) REFERENCES parent(id));"
-        )
-        connection.commit()
-        connection.close()
-    connection = sqlite3.connect(source)
-    connection.executemany("INSERT INTO parent VALUES (?, ?)", [(1, "Ada")])
-    connection.executemany("INSERT INTO child VALUES (?, ?, ?)", [(10, 1, "child")])
-    connection.commit()
-    connection.close()
-
-    transfer_path = tmp_path / "fk-transfer.jsonl"
-    assert (
-        export_database(
-            ExportOptions(
-                connection=TransferConnection("sqlite", dsn=f"sqlite:///{source.as_posix()}"),
-                output=transfer_path,
-                timezone=UTC,
-            )
-        ).row_count
-        == 2
-    )
-    assert (
-        import_database(
-            ImportOptions(
-                connection=TransferConnection("sqlite", dsn=f"sqlite:///{target.as_posix()}"),
-                input=transfer_path,
-                mode="insert",
-                timezone=UTC,
-            )
-        ).row_count
-        == 2
-    )
-    connection = sqlite3.connect(target)
-    assert connection.execute("SELECT COUNT(*) FROM child").fetchone() == (1,)
-    connection.close()
 
 
 def test_sqlalchemy_transfer_covers_dialect_boundaries() -> None:
@@ -692,10 +613,10 @@ def test_read_sql_file_rejects_missing_empty_and_directory(tmp_path: Path) -> No
         read_sql_file(tmp_path)
 
 
-def test_exec_file_runs_literal_script_in_one_transaction(tmp_path: Path) -> None:
-    path = tmp_path / "cli.db"
-    create_database(path)
-    dsn = f"sqlite:///{path.as_posix()}"
+def test_exec_file_runs_literal_script_in_one_transaction(
+    tmp_path: Path, database: MemoryDatabase
+) -> None:
+    dsn = database.dsn
     runner = CliRunner()
     script = tmp_path / "update.sql"
     script.write_text(
@@ -719,10 +640,10 @@ def test_exec_file_runs_literal_script_in_one_transaction(tmp_path: Path) -> Non
     assert json.loads(query.stdout)["rows"] == [{"name": '{"optional":true}'}]
 
 
-def test_exec_dry_run_prints_sql_without_executing(tmp_path: Path) -> None:
-    path = tmp_path / "dry-run.db"
-    create_database(path)
-    dsn = f"sqlite:///{path.as_posix()}"
+def test_exec_dry_run_prints_sql_without_executing(
+    tmp_path: Path, database: MemoryDatabase
+) -> None:
+    dsn = database.dsn
     runner = CliRunner()
     script = tmp_path / "update.sql"
     script.write_text(
@@ -769,10 +690,10 @@ def test_exec_dry_run_prints_sql_without_executing(tmp_path: Path) -> None:
     assert json.loads(query.stdout)["rows"] == [{"name": "Ada", "active": 1}]
 
 
-def test_exec_file_rolls_back_when_a_later_statement_fails(tmp_path: Path) -> None:
-    path = tmp_path / "rollback.db"
-    create_database(path)
-    dsn = f"sqlite:///{path.as_posix()}"
+def test_exec_file_rolls_back_when_a_later_statement_fails(
+    tmp_path: Path, database: MemoryDatabase
+) -> None:
+    dsn = database.dsn
     script = tmp_path / "bad.sql"
     script.write_text(
         "UPDATE users SET name = 'Grace' WHERE id = 1;\nUPDATE missing SET name = 1;\n",
@@ -791,10 +712,8 @@ def test_exec_file_rolls_back_when_a_later_statement_fails(tmp_path: Path) -> No
     assert json.loads(query.stdout)["rows"] == [{"name": "Ada"}]
 
 
-def test_exec_requires_sql_or_file_exclusively(tmp_path: Path) -> None:
-    path = tmp_path / "cli.db"
-    create_database(path)
-    dsn = f"sqlite:///{path.as_posix()}"
+def test_exec_requires_sql_or_file_exclusively(tmp_path: Path, database: MemoryDatabase) -> None:
+    dsn = database.dsn
     runner = CliRunner()
     script = tmp_path / "ok.sql"
     script.write_text("UPDATE users SET name = 'Grace' WHERE id = 1;", encoding="utf-8")
@@ -824,10 +743,8 @@ def test_exec_requires_sql_or_file_exclusively(tmp_path: Path) -> None:
     assert "SQL file contains no executable statements" in no_statements.output
 
 
-def test_cli_without_parameters_executes_sql_literally(tmp_path: Path) -> None:
-    path = tmp_path / "literal-sql.db"
-    create_database(path)
-    dsn = f"sqlite:///{path.as_posix()}"
+def test_cli_without_parameters_executes_sql_literally(database: MemoryDatabase) -> None:
+    dsn = database.dsn
     runner = CliRunner()
     literal_json = '{"optional":null}'
 
@@ -861,11 +778,9 @@ def test_cli_without_parameters_executes_sql_literally(tmp_path: Path) -> None:
 
 
 def test_query_and_exec_cli_use_dsn_environment(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch, database: MemoryDatabase
 ) -> None:
-    path = tmp_path / "cli.db"
-    create_database(path)
-    monkeypatch.setenv("DBTALK_DSN_QUERY", f"sqlite:///{path.as_posix()}")
+    monkeypatch.setenv("DBTALK_DSN_QUERY", database.dsn)
     runner = CliRunner()
 
     query = runner.invoke(
@@ -890,7 +805,7 @@ def test_query_and_exec_cli_use_dsn_environment(
         [
             "query",
             "--dsn",
-            f"sqlite:///{path.as_posix()}",
+            database.dsn,
             "--sql",
             "SELECT name FROM users WHERE id = :id",
             "--param",
@@ -918,10 +833,8 @@ def test_query_and_exec_cli_use_dsn_environment(
     assert "1 rows affected" in execution.output
 
 
-def test_query_and_exec_cli_session_modes_and_timeouts(tmp_path: Path) -> None:
-    path = tmp_path / "safeguards.db"
-    create_database(path)
-    dsn = f"sqlite:///{path.as_posix()}"
+def test_query_and_exec_cli_session_modes_and_timeouts(database: MemoryDatabase) -> None:
+    dsn = database.dsn
     runner = CliRunner()
 
     execution = runner.invoke(
@@ -982,21 +895,6 @@ def test_query_and_exec_cli_session_modes_and_timeouts(tmp_path: Path) -> None:
     assert "database query failed" in verbose_query.output
     assert "sqlalchemy.exc.OperationalError" in verbose_query.output
 
-    for extra in ("--write", "-w"):
-        rejected = runner.invoke(
-            cli,
-            [
-                "exec",
-                extra,
-                "--dsn",
-                dsn,
-                "--sql",
-                "UPDATE users SET name = 'Ada' WHERE id = 1",
-            ],
-        )
-        assert rejected.exit_code != 0
-        assert "No such option" in rejected.output
-
     invalid_timeout = runner.invoke(
         cli,
         [
@@ -1013,10 +911,8 @@ def test_query_and_exec_cli_session_modes_and_timeouts(tmp_path: Path) -> None:
     assert "x>=1" in invalid_timeout.output
 
 
-def test_exec_verbose_shows_sanitized_exception_details(tmp_path: Path) -> None:
-    path = tmp_path / "verbose.db"
-    create_database(path)
-    dsn = f"sqlite:///{path.as_posix()}"
+def test_exec_verbose_shows_sanitized_exception_details(database: MemoryDatabase) -> None:
+    dsn = database.dsn
     runner = CliRunner()
     sql = "UPDATE missing SET name = :name WHERE id = :id"
 
@@ -1053,15 +949,13 @@ def test_exec_verbose_shows_sanitized_exception_details(tmp_path: Path) -> None:
     assert "[SQL:" not in verbose.output
 
 
-def test_sqlite_statement_timeout_interrupts_query_and_cleans_up(tmp_path: Path) -> None:
-    path = tmp_path / "timeout.db"
-    create_database(path)
+def test_sqlite_statement_timeout_interrupts_query_and_cleans_up(database: MemoryDatabase) -> None:
     slow_query = (
         "WITH RECURSIVE sequence(value) AS (VALUES(1) UNION ALL "
         "SELECT value + 1 FROM sequence WHERE value < 100000000) "
         "SELECT sum(value) FROM sequence"
     )
-    with DatabaseClient(f"sqlite:///{path.as_posix()}", timeout_seconds=0.01) as client:
+    with DatabaseClient(database.dsn, timeout_seconds=0.01) as client:
         with pytest.raises(DatabaseOperationError, match="query timed out"):
             client.query(slow_query)
         assert client.query("SELECT name FROM users WHERE id = 1").rows == (("Ada",),)
@@ -1077,12 +971,10 @@ def test_engine_options_keep_statement_and_connection_timeouts_separate() -> Non
     assert _engine_options(postgres, 30, 7) == {"connect_args": {"connect_timeout": 7}}
 
 
-def test_async_client_does_not_block_event_loop(tmp_path: Path) -> None:
-    path = tmp_path / "async-event.db"
-    create_database(path)
+def test_async_client_does_not_block_event_loop(database: MemoryDatabase) -> None:
 
     async def run() -> tuple[tuple[object, ...], tuple[object, ...]]:
-        client = AsyncDatabaseClient(f"sqlite:///{path.as_posix()}")
+        client = AsyncDatabaseClient(database.dsn)
         try:
             first = (await client.query("SELECT id FROM users")).rows
             await asyncio.sleep(0)

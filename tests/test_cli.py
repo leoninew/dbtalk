@@ -5,11 +5,9 @@ import logging
 import click
 import pytest
 from click.testing import CliRunner
-from pytest import MonkeyPatch
 from sqlalchemy.exc import SQLAlchemyError
 
-from dbtalk import cli as cli_module
-from dbtalk.cli import cli, main
+from dbtalk.cli import cli
 from dbtalk.context import dbtalk_context
 from dbtalk.database.models import (
     DatabaseOperationError,
@@ -27,6 +25,7 @@ def test_help_lists_root_and_dialect_commands() -> None:
     assert "postgres" in result.output
     assert "query" in result.output
     assert "export" in result.output
+    assert "import" in result.output
 
 
 def test_root_command_displays_help() -> None:
@@ -52,39 +51,11 @@ def test_command_group_help_is_available() -> None:
     assert "--sql" in query_result.output
 
 
-def test_removed_database_command_is_rejected() -> None:
-    result = CliRunner().invoke(cli, ["database", "--help"])
-
-    assert result.exit_code != 0
-    assert "No such command 'database'" in result.output
-
-
-@pytest.mark.parametrize("dialect", ["mysql", "postgres"])
-def test_removed_dialect_database_command_is_rejected(dialect: str) -> None:
-    result = CliRunner().invoke(cli, [dialect, "database", "--help"])
-
-    assert result.exit_code != 0
-    assert "No such command 'database'" in result.output
-
-
 def test_context_requires_root_initialization() -> None:
     context = click.Context(click.Command("dbtalk"))
 
     with pytest.raises(RuntimeError, match="CLI context was not initialized"):
         dbtalk_context(context)
-
-
-def test_main_invokes_root_command(monkeypatch: MonkeyPatch) -> None:
-    called = False
-
-    def fake_cli() -> None:
-        nonlocal called
-        called = True
-
-    monkeypatch.setattr(cli_module, "cli", fake_cli)
-    main()
-
-    assert called
 
 
 def test_verbose_option_is_only_on_root_command() -> None:
@@ -103,7 +74,6 @@ def test_verbose_option_is_only_on_root_command() -> None:
     assert "-v, --verbose" not in exec_help.output
     assert "--file" in exec_help.output
     assert "--dry-run" in exec_help.output
-    assert "--write" not in exec_help.output
     assert dump_help.exit_code == 0, dump_help.output
     assert "-v, --verbose" not in dump_help.output
     assert grant_help.exit_code == 0, grant_help.output

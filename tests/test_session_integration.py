@@ -224,23 +224,3 @@ def test_native_permission_failure_preserves_partial_results(instance: Instance)
     report = instance.kill(session_id=other_id, user=instance.operator)
     assert report.successful and report.results[0].status == "terminated"
     assert_disconnected(other)
-
-
-def test_mysql_database_change_before_signal_is_not_killed(
-    instance: Instance, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    if instance.parsed.dialect != "mysql":
-        pytest.skip("MySQL default-database transition")
-    client = instance.connect(instance.database)
-    session_id = instance.session_id(client)
-    original_read = mysql._read
-
-    def switch_database(connection: Connection, selected_id: int) -> mysql._Session | None:
-        if selected_id == session_id:
-            client.exec_driver_sql(f"USE {instance.sentinel}")
-        return original_read(connection, selected_id)
-
-    monkeypatch.setattr(mysql, "_read", switch_database)
-    report = instance.kill(session_id=session_id)
-    assert not report.successful and report.results[0].status == "changed"
-    assert client.exec_driver_sql("SELECT 1").scalar_one() == 1

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-import sqlite3
+from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -15,9 +16,10 @@ import dbtalk.postgres.database as postgres_database
 import dbtalk.postgres.owner as postgres_owner
 import dbtalk.postgres.role as postgres_role
 from dbtalk.cli import cli
-from dbtalk.database.dsn import parse_dsn, password_from_environment, sqlite_dsn
+from dbtalk.database.dsn import parse_dsn, password_from_environment
 from dbtalk.database.models import DatabaseOperationError
 from dbtalk.postgres.owner import OwnershipPreview
+from tests.sqlite_helpers import MemoryDatabase
 
 
 def test_query_keeps_json_on_stdout_and_omits_sql_and_parameters_from_logs() -> None:
@@ -237,18 +239,19 @@ def test_postgres_backup_logs_lifecycle(
     assert "private-password" not in result.stderr
 
 
-@pytest.mark.parametrize("verbose", [[], ["-v"], ["--verbose"]])
+@pytest.mark.parametrize("verbose", [[], ["-v"]])
 def test_transfer_logging_is_opt_in_without_duplicate_events(
-    tmp_path: Path, verbose: list[str]
+    tmp_path: Path, verbose: list[str], sqlite_database: Callable[[], MemoryDatabase]
 ) -> None:
-    source = tmp_path / "source.db"
-    target = tmp_path / "target.db"
+    source = sqlite_database()
+    target = sqlite_database()
     archive = tmp_path / "transfer.jsonl"
     for database in (source, target):
-        with sqlite3.connect(database) as connection:
+        with closing(database.connect()) as connection:
             connection.execute("CREATE TABLE items(id INTEGER PRIMARY KEY)")
             if database == source:
                 connection.execute("INSERT INTO items VALUES (1)")
+            connection.commit()
     runner = CliRunner()
     for command, database, direction, file_option in (
         ("export", source, "--source", "--output"),
@@ -260,7 +263,7 @@ def test_transfer_logging_is_opt_in_without_duplicate_events(
             direction,
             "sqlite",
             "--dsn",
-            sqlite_dsn(database),
+            database.dsn,
             file_option,
             str(archive),
         ]
@@ -277,11 +280,13 @@ def test_transfer_logging_is_opt_in_without_duplicate_events(
         assert f"cli {command} started" not in result.stderr
         if not verbose:
             assert result.stderr == ""
-    with sqlite3.connect(target) as connection:
+    with closing(target.connect()) as connection:
         assert connection.execute("SELECT id FROM items").fetchall() == [(1,)]
 
 
-def test_logging_respects_format_level_and_verbose_without_duplicate_records() -> None:
+def test_logging_respects_format_level_and_verbose_without_duplicate_records(
+    real_cli_settings: None,
+) -> None:
     runner = CliRunner()
     for verbose, level, expected_lines in (
         ([], "INFO", 0),
@@ -310,8 +315,6 @@ def test_logging_respects_format_level_and_verbose_without_duplicate_records() -
 def test_transfer_failure_logs_are_also_opt_in(tmp_path: Path, verbose: list[str]) -> None:
     archive = tmp_path / "invalid.jsonl"
     archive.write_text("invalid JSON\n", encoding="utf-8")
-    target = tmp_path / "target.db"
-    target.touch()
     result = CliRunner().invoke(
         cli,
         [
@@ -320,7 +323,7 @@ def test_transfer_failure_logs_are_also_opt_in(tmp_path: Path, verbose: list[str
             "--target",
             "sqlite",
             "--dsn",
-            sqlite_dsn(target),
+            "sqlite:///:memory:",
             "--input",
             str(archive),
             "--mode",

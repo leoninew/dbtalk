@@ -15,7 +15,7 @@ import dbtalk.database.sessions as shared
 import dbtalk.mysql.session as mysql
 from dbtalk.database.dsn import parse_dsn
 from dbtalk.database.models import DatabaseOperationError
-from dbtalk.settings import load_settings
+from dbtalk.settings import Settings
 
 
 def target(session_id: int = 11, /, **changes: object) -> dict[str, object]:
@@ -53,14 +53,16 @@ def connection(monkeypatch: pytest.MonkeyPatch) -> Mock:
     return value
 
 
-def test_command_state_can_change_without_changing_the_connection(connection: Mock) -> None:
+def test_command_state_can_change_without_changing_the_connection(
+    connection: Mock, settings: Settings
+) -> None:
     connection.execute.side_effect = [
         rows(target()),
         rows(target(PROCESSLIST_COMMAND="Query")),
         Mock(),
     ]
     report = mysql.kill_sessions(
-        parse_dsn("mysql+pymysql://admin:private@localhost/app"), settings=load_settings()
+        parse_dsn("mysql+pymysql://admin:private@localhost/app"), settings=settings
     )
     assert report.results[0].status == "requested"
     assert str(connection.execute.call_args.args[0]) == "KILL CONNECTION :id"
@@ -77,11 +79,11 @@ def test_command_state_can_change_without_changing_the_connection(connection: Mo
     ],
 )
 def test_scope_identity_and_system_thread_changes_prevent_kill(
-    connection: Mock, change: dict[str, object]
+    connection: Mock, change: dict[str, object], settings: Settings
 ) -> None:
     connection.execute.side_effect = [rows(target()), rows(target(**change))]
     report = mysql.kill_sessions(
-        parse_dsn("mysql+pymysql://admin:private@localhost/app"), settings=load_settings()
+        parse_dsn("mysql+pymysql://admin:private@localhost/app"), settings=settings
     )
     assert report.results[0].status == "changed"
     assert not any(
@@ -90,7 +92,7 @@ def test_scope_identity_and_system_thread_changes_prevent_kill(
 
 
 def test_wait_does_not_use_the_default_database_to_decide_exit(
-    connection: Mock, monkeypatch: pytest.MonkeyPatch
+    connection: Mock, monkeypatch: pytest.MonkeyPatch, settings: Settings
 ) -> None:
     now = [0.0]
     monkeypatch.setattr(shared, "monotonic", lambda: now[0])
@@ -108,7 +110,7 @@ def test_wait_does_not_use_the_default_database_to_decide_exit(
     ]
     report = mysql.kill_sessions(
         parse_dsn("mysql+pymysql://admin:private@localhost/app"),
-        settings=load_settings(),
+        settings=settings,
         wait_seconds=1,
     )
     assert report.results[0].status == "terminated"
@@ -117,7 +119,7 @@ def test_wait_does_not_use_the_default_database_to_decide_exit(
         assert call.args[1] == {"ids": (11,)}
 
 
-def test_batch_continues_after_permission_failure(connection: Mock) -> None:
+def test_batch_continues_after_permission_failure(connection: Mock, settings: Settings) -> None:
     denied = DBAPIError("private SQL", {}, Exception(1095, "private diagnostic"))
     connection.execute.side_effect = [
         rows(target(), target(12)),
@@ -127,13 +129,15 @@ def test_batch_continues_after_permission_failure(connection: Mock) -> None:
         Mock(),
     ]
     report = mysql.kill_sessions(
-        parse_dsn("mysql+pymysql://admin:private@localhost/app"), settings=load_settings()
+        parse_dsn("mysql+pymysql://admin:private@localhost/app"), settings=settings
     )
     assert [item.status for item in report.results] == ["failed", "requested"]
     assert report.results[0].detail == "permission denied (code 1095)"
 
 
-def test_unknown_thread_is_only_success_when_original_is_gone(connection: Mock) -> None:
+def test_unknown_thread_is_only_success_when_original_is_gone(
+    connection: Mock, settings: Settings
+) -> None:
     unknown = DBAPIError("private SQL", {}, Exception(1094, "unknown thread"))
     connection.execute.side_effect = [
         rows(target()),
@@ -142,23 +146,25 @@ def test_unknown_thread_is_only_success_when_original_is_gone(connection: Mock) 
         rows(),
     ]
     report = mysql.kill_sessions(
-        parse_dsn("mysql+pymysql://admin:private@localhost/app"), settings=load_settings()
+        parse_dsn("mysql+pymysql://admin:private@localhost/app"), settings=settings
     )
     assert report.results[0].status == "gone"
 
 
-def test_self_and_missing_scoped_id_are_rejected(connection: Mock) -> None:
+def test_self_and_missing_scoped_id_are_rejected(connection: Mock, settings: Settings) -> None:
     parsed = parse_dsn("mysql+pymysql://admin:private@localhost/app")
     with pytest.raises(DatabaseOperationError, match="current management"):
-        mysql.kill_sessions(parsed, settings=load_settings(), session_id=900)
+        mysql.kill_sessions(parsed, settings=settings, session_id=900)
     connection.execute.assert_not_called()
     connection.execute.return_value = rows()
     with pytest.raises(DatabaseOperationError, match="target database"):
-        mysql.kill_sessions(parsed, settings=load_settings(), session_id=12)
+        mysql.kill_sessions(parsed, settings=settings, session_id=12)
     assert connection.execute.call_args.args[1] == {"database": "app", "id": 12}
 
 
-def test_disconnect_leaves_unattempted_targets_and_never_reconnects(connection: Mock) -> None:
+def test_disconnect_leaves_unattempted_targets_and_never_reconnects(
+    connection: Mock, settings: Settings
+) -> None:
     lost = DBAPIError(
         "private SQL", {}, Exception(2013, "connection lost"), connection_invalidated=True
     )
@@ -168,7 +174,7 @@ def test_disconnect_leaves_unattempted_targets_and_never_reconnects(connection: 
         lost,
     ]
     report = mysql.kill_sessions(
-        parse_dsn("mysql+pymysql://admin:private@localhost/app"), settings=load_settings()
+        parse_dsn("mysql+pymysql://admin:private@localhost/app"), settings=settings
     )
     assert [item.status for item in report.results] == ["failed", "not_attempted"]
     assert connection.execute.call_count == 3

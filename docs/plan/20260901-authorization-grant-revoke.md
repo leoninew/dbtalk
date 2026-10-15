@@ -118,7 +118,6 @@ Profile 的撤销只撤销该 profile 映射的权限；不得因为撤销较小
 - `tests/test_user_management.py`
 - `tests/test_database_administration.py`
 - `tests/test_cli.py`
-- `tests/test_database_transfer_contract.py`
 - `tests/test_database_operations.py`
 - `README.md`
 - `docs/mysql.md`

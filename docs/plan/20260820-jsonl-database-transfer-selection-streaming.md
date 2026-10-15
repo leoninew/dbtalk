@@ -63,7 +63,7 @@ dbtalk database import --target sqlite|mysql --input <file> --mode insert|upsert
    - 保留现有表级提交、失败回滚和 SQLite 完整性检查；输出已成功表与失败表的非敏感摘要。生产导入路径直接采用新 reader，不保留旧的整文档导入适配分支。
 
 5. 调整测试、文档和 skill。
-   - 更新 `tests/test_database_transfer.py`、`tests/test_database_transfer_contract.py`、`tests/test_database_transfer_logging.py`，覆盖 include/exclude、空集合、未知表、冲突优先级、外部 FK 预检、FK 顺序和 `.jsonl.gz` 双遍导入。
+   - 更新 `tests/test_database_transfer.py`、`tests/test_cli.py`、`tests/test_database_transfer_logging.py`，覆盖 include/exclude、空集合、未知表、冲突优先级、外部 FK 预检、FK 顺序和 `.jsonl.gz` 双遍导入。
    - 增加 fake cursor 的 `fetchmany(1000)` 行为测试，并断言 SQLite/MySQL export 不使用 `fetchall()` 读取业务数据。
    - 增加大数据模拟测试，验证内存模型只保留批次而非整表；不要求真实大库。
    - 更新 `docs/usage/database.md`、`skills/database-transfer/SKILL.md`（如该 skill 已存在则沿用其位置），说明默认全表、include/exclude 规则、1000 条批量、外键预检、双遍读取和表级事务。
@@ -85,7 +85,7 @@ dbtalk database import --target sqlite|mysql --input <file> --mode insert|upsert
 - `src/dbtalk/mysql/dump.py`
 - `src/dbtalk/mysql/restore.py`
 - `tests/test_database_transfer.py`
-- `tests/test_database_transfer_contract.py`
+- `tests/test_cli.py`
 - `tests/test_database_transfer_logging.py`
 - `tests/test_mysql.py`
 - `docs/database.md`

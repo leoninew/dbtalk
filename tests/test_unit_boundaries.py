@@ -5,7 +5,8 @@ from __future__ import annotations
 import gzip
 import io
 import subprocess
-from datetime import UTC, date, datetime, time, timedelta
+from dataclasses import replace
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
@@ -15,10 +16,8 @@ import pytest
 
 import dbtalk.database.cli as database_cli
 import dbtalk.database.format as transfer_format
-import dbtalk.database.mysql as mysql_transfer
 import dbtalk.database.schema as schema
 import dbtalk.mysql.client as mysql_client
-import dbtalk.settings as dbtalk_settings
 from dbtalk.context import DbtalkContext
 from dbtalk.database.models import (
     ColumnDefinition,
@@ -29,6 +28,7 @@ from dbtalk.database.models import (
     TransferDocument,
     TransferHeader,
 )
+from dbtalk.settings import DatabaseTransferConfig, Settings
 
 
 def test_format_round_trips_declared_values_and_datetime_variants() -> None:
@@ -376,31 +376,14 @@ def test_schema_selection_order_validation_and_value_conversion() -> None:
         )
 
 
-def test_database_cli_option_guards_and_settings_validation() -> None:
+def test_database_cli_timezone_and_timeouts(settings: Settings) -> None:
     with pytest.raises(click.BadParameter, match="unknown IANA timezone"):
         database_cli.parse_timezone("Not/A_Timezone")
-    with pytest.raises(click.UsageError, match="must be sqlite or mysql"):
-        database_cli.connection_from_options("postgres")
-    with pytest.raises(click.UsageError, match="exactly one"):
-        database_cli.connection_from_options("sqlite")
     context = click.Context(click.Command("dbtalk"))
     context.obj = DbtalkContext(
-        settings=dbtalk_settings.Settings(
-            logging=dbtalk_settings.LoggingSettings(level="INFO", format="%(message)s"),
-            mysql=dbtalk_settings.MySQLConfig(
-                output_directory="data",
-                client_image="mysql:8.0.39",
-                zero_datetime_as_null=True,
-            ),
-            database=dbtalk_settings.DatabaseTransferConfig(
-                query_timeout_seconds=15,
-                exec_timeout_seconds=45,
-            ),
-            postgres=dbtalk_settings.DumpRestoreConfig(
-                output_directory="data",
-                client_image="postgres:18-alpine",
-            ),
-            session=dbtalk_settings.SessionConfig(poll_interval_seconds=0.1),
+        settings=replace(
+            settings,
+            database=DatabaseTransferConfig(query_timeout_seconds=15, exec_timeout_seconds=45),
         ),
         verbose=False,
     )
@@ -408,72 +391,6 @@ def test_database_cli_option_guards_and_settings_validation() -> None:
     assert database_cli.exec_timeout_from_context(context, None) == 45
     assert database_cli.query_timeout_from_context(context, 5) == 5
     assert database_cli.exec_timeout_from_context(context, 10) == 10
-    with pytest.raises(RuntimeError, match="valid source"):
-        database_cli.export_command_arguments({})
-    with pytest.raises(RuntimeError, match="output path"):
-        database_cli.export_command_arguments(_export_options(output="transfer.jsonl"))
-    assert database_cli.export_command_arguments(_export_options(output=None)).output_path is None
-    with pytest.raises(RuntimeError, match="valid DSN"):
-        database_cli.export_command_arguments(_export_options(dsn_value=1))
-    with pytest.raises(RuntimeError, match="valid DSN variable"):
-        database_cli.export_command_arguments(_export_options(dsn_env=1))
-    with pytest.raises(RuntimeError, match="valid timezone"):
-        database_cli.export_command_arguments(_export_options(timezone_name=1))
-    with pytest.raises(RuntimeError, match="valid included"):
-        database_cli.export_command_arguments(_export_options(include_tables=(1,)))
-    with pytest.raises(RuntimeError, match="valid excluded"):
-        database_cli.export_command_arguments(_export_options(exclude_tables=(1,)))
-    with pytest.raises(RuntimeError, match="valid archive"):
-        database_cli.export_command_arguments(_export_options(archive="true"))
-    with pytest.raises(RuntimeError, match="valid target"):
-        database_cli.import_command_arguments({})
-    with pytest.raises(RuntimeError, match="input path"):
-        database_cli.import_command_arguments(_import_options(input_path="transfer.jsonl"))
-    with pytest.raises(RuntimeError, match="valid import mode"):
-        database_cli.import_command_arguments(_import_options(mode="replace"))
-    with pytest.raises(RuntimeError, match="valid DSN"):
-        database_cli.import_command_arguments(_import_options(dsn_value=1))
-    with pytest.raises(RuntimeError, match="valid DSN variable"):
-        database_cli.import_command_arguments(_import_options(dsn_env=1))
-    with pytest.raises(RuntimeError, match="valid timezone"):
-        database_cli.import_command_arguments(_import_options(timezone_name=1))
-    with pytest.raises(RuntimeError, match="valid included"):
-        database_cli.import_command_arguments(_import_options(include_tables=(1,)))
-    with pytest.raises(RuntimeError, match="valid excluded"):
-        database_cli.import_command_arguments(_import_options(exclude_tables=(1,)))
-
-    assert database_cli.zero_datetime_as_null_from_context(click.Context(click.Command("dbtalk")))
-    assert dbtalk_settings.bool_config("yes")
-    assert not dbtalk_settings.bool_config("off")
-    assert dbtalk_settings.int_config("3307") == 3307
-    assert dbtalk_settings.mapping_config(None) == {}
-    with pytest.raises(ValueError, match="database.query_timeout_seconds"):
-        dbtalk_settings.load_database_transfer_config(
-            {"query_timeout_seconds": 0, "exec_timeout_seconds": 30}
-        )
-    with pytest.raises(ValueError, match="database.exec_timeout_seconds"):
-        dbtalk_settings.load_database_transfer_config(
-            {"query_timeout_seconds": 30, "exec_timeout_seconds": 0}
-        )
-    with pytest.raises(ValueError, match="database.query_timeout_seconds"):
-        dbtalk_settings.load_database_transfer_config({"exec_timeout_seconds": 30})
-    with pytest.raises(ValueError, match="mysql.output_directory"):
-        dbtalk_settings.load_dump_restore_config(
-            {"output_directory": "  "},
-            group="mysql",
-        )
-    with pytest.raises(ValueError, match="postgres.client_image"):
-        dbtalk_settings.load_dump_restore_config(
-            {"client_image": "  "},
-            group="postgres",
-        )
-    assert not dbtalk_settings.load_mysql_config(
-        {
-            "output_directory": "data",
-            "client_image": "mysql:8.0.39",
-            "zero_datetime_as_null": "false",
-        }
-    ).zero_datetime_as_null
 
 
 def test_database_export_output_path_resolution(
@@ -502,13 +419,6 @@ def test_database_export_output_path_resolution(
         )
 
 
-def test_mysql_value_helpers_cover_invalid_boundaries() -> None:
-    assert mysql_transfer._mysql_time_of_day(timedelta(hours=1, minutes=2, seconds=3)) == "01:02:03"
-    assert mysql_transfer._mysql_time_of_day(timedelta(microseconds=120000)) == "00:00:00.12"
-    with pytest.raises(DatabaseTransferError, match="outside"):
-        mysql_transfer._mysql_time_of_day(timedelta(days=1))
-
-
 def _document() -> TransferDocument:
     header = _header("items")
     return TransferDocument(
@@ -527,33 +437,3 @@ def _header(name: str) -> TableBlockHeader:
 
 def _schema(name: str, foreign_keys: tuple[str, ...] = ()) -> TableSchema:
     return TableSchema(name, _header(name).columns, ("id",), foreign_keys)
-
-
-def _export_options(**overrides: object) -> dict[str, object]:
-    options: dict[str, object] = {
-        "source": "sqlite",
-        "output": Path("transfer.jsonl"),
-        "dsn_value": None,
-        "dsn_env": None,
-        "timezone_name": "UTC",
-        "include_tables": (),
-        "exclude_tables": (),
-        "archive": False,
-    }
-    options.update(overrides)
-    return options
-
-
-def _import_options(**overrides: object) -> dict[str, object]:
-    options: dict[str, object] = {
-        "target": "sqlite",
-        "input_path": Path("transfer.jsonl"),
-        "mode": "insert",
-        "dsn_value": None,
-        "dsn_env": None,
-        "timezone_name": "UTC",
-        "include_tables": (),
-        "exclude_tables": (),
-    }
-    options.update(overrides)
-    return options

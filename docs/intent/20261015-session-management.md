@@ -1,5 +1,5 @@
 # Intent / 意图：PostgreSQL 与 MySQL 会话查看和终止
-最后修改时间: 2026-10-15 11:55:10
+最后修改时间: 2026-10-15 12:17:19
 
 ## Review status / 审查状态
 
@@ -129,3 +129,4 @@ MySQL 的会话 database 表示当前默认数据库：一个会话仍可使用�
 - 2026-10-15：用户要求“开始实现”，接受计划并进入 Implementation；必要开发检查随实现进行。
 - 2026-10-15：用户确认“验证有效”，要求完成 SpecFlow 验证文档，接受实现交付并授权整体 Verification；随后反馈 Cygwin 的 make check/test 遇到 uv trampoline 启动错误，纳入本轮修复与检查。
 - 2026-10-15：定位到虚拟环境启动器引用原 pomelo-dbtalk 目录。用户要求重置初始化 uv 环境，不通过修改 Makefile 绕过；据此恢复原始 Makefile，沿用 Python 3.12.10 和 uv.lock 重建 .venv，并重新检查原始入口。
+- 2026-10-15：用户要求清理旧环境、不保留备份。原始 make check/test 通过后，旧环境备份已删除，仅保留重建并验证通过的 .venv。

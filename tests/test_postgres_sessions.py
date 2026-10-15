@@ -15,7 +15,7 @@ from sqlalchemy.exc import DBAPIError
 import dbtalk.postgres.session as postgres
 from dbtalk.database.dsn import parse_dsn
 from dbtalk.database.models import DatabaseOperationError
-from dbtalk.settings import load_settings
+from dbtalk.settings import Settings
 
 STARTED = datetime(2026, 10, 15, tzinfo=UTC)
 
@@ -53,7 +53,9 @@ def connection(monkeypatch: pytest.MonkeyPatch) -> Mock:
     return value
 
 
-def test_batch_keeps_success_before_a_permission_failure(connection: Mock) -> None:
+def test_batch_keeps_success_before_a_permission_failure(
+    connection: Mock, settings: Settings
+) -> None:
     class Denied(Exception):
         sqlstate = "42501"
 
@@ -66,7 +68,7 @@ def test_batch_keeps_success_before_a_permission_failure(connection: Mock) -> No
         denied,
     ]
     report = postgres.kill_sessions(
-        parse_dsn("postgresql+psycopg://admin:private@localhost/app"), settings=load_settings()
+        parse_dsn("postgresql+psycopg://admin:private@localhost/app"), settings=settings
     )
     assert [item.status for item in report.results] == ["requested", "failed"]
     assert not report.successful
@@ -82,14 +84,16 @@ def test_batch_keeps_success_before_a_permission_failure(connection: Mock) -> No
     assert "private diagnostic" not in str(report)
 
 
-def test_changed_identity_and_already_gone_are_not_signalled(connection: Mock) -> None:
+def test_changed_identity_and_already_gone_are_not_signalled(
+    connection: Mock, settings: Settings
+) -> None:
     connection.execute.side_effect = [
         rows(target(), target(12)),
         rows(target(backend_start=STARTED + timedelta(seconds=1))),
         rows(),
     ]
     report = postgres.kill_sessions(
-        parse_dsn("postgresql+psycopg://admin:private@localhost/app"), settings=load_settings()
+        parse_dsn("postgresql+psycopg://admin:private@localhost/app"), settings=settings
     )
     assert [item.status for item in report.results] == ["changed", "gone"]
     assert not any(
@@ -97,18 +101,22 @@ def test_changed_identity_and_already_gone_are_not_signalled(connection: Mock) -
     )
 
 
-def test_self_and_id_not_in_target_database_are_rejected(connection: Mock) -> None:
+def test_self_and_id_not_in_target_database_are_rejected(
+    connection: Mock, settings: Settings
+) -> None:
     parsed = parse_dsn("postgresql+psycopg://admin:private@localhost/app")
     with pytest.raises(DatabaseOperationError, match="current management"):
-        postgres.kill_sessions(parsed, settings=load_settings(), session_id=900)
+        postgres.kill_sessions(parsed, settings=settings, session_id=900)
     connection.execute.assert_not_called()
     connection.execute.return_value = rows()
     with pytest.raises(DatabaseOperationError, match="target database"):
-        postgres.kill_sessions(parsed, settings=load_settings(), session_id=12)
+        postgres.kill_sessions(parsed, settings=settings, session_id=12)
     assert connection.execute.call_args.args[1] == {"database": "app", "id": 12}
 
 
-def test_wait_confirms_original_identities_in_one_unscoped_query(connection: Mock) -> None:
+def test_wait_confirms_original_identities_in_one_unscoped_query(
+    connection: Mock, settings: Settings
+) -> None:
     finished = Mock()
     finished.fetchall.return_value = []
     connection.execute.side_effect = [
@@ -121,7 +129,7 @@ def test_wait_confirms_original_identities_in_one_unscoped_query(connection: Moc
     ]
     report = postgres.kill_sessions(
         parse_dsn("postgresql+psycopg://admin:private@localhost/app"),
-        settings=load_settings(),
+        settings=settings,
         wait_seconds=1,
     )
     assert [item.status for item in report.results] == ["terminated", "terminated"]
@@ -131,11 +139,11 @@ def test_wait_confirms_original_identities_in_one_unscoped_query(connection: Moc
     assert "backend_type" not in str(statement)
 
 
-def test_invisible_identity_is_not_blindly_terminated(connection: Mock) -> None:
+def test_invisible_identity_is_not_blindly_terminated(connection: Mock, settings: Settings) -> None:
     hidden = target(backend_start=None)
     connection.execute.side_effect = [rows(hidden), rows(hidden)]
     report = postgres.kill_sessions(
-        parse_dsn("postgresql+psycopg://admin:private@localhost/app"), settings=load_settings()
+        parse_dsn("postgresql+psycopg://admin:private@localhost/app"), settings=settings
     )
     assert report.results[0].status == "failed"
     assert "not visible" in report.results[0].detail
@@ -144,7 +152,9 @@ def test_invisible_identity_is_not_blindly_terminated(connection: Mock) -> None:
     )
 
 
-def test_disconnect_does_not_retry_or_signal_remaining_targets(connection: Mock) -> None:
+def test_disconnect_does_not_retry_or_signal_remaining_targets(
+    connection: Mock, settings: Settings
+) -> None:
     lost = DBAPIError("private SQL", {}, Exception("disconnected"), connection_invalidated=True)
     connection.execute.side_effect = [
         rows(target(), target(12), target(13)),
@@ -155,7 +165,7 @@ def test_disconnect_does_not_retry_or_signal_remaining_targets(connection: Mock)
     ]
     report = postgres.kill_sessions(
         parse_dsn("postgresql+psycopg://admin:private@localhost/app"),
-        settings=load_settings(),
+        settings=settings,
         wait_seconds=1,
     )
     assert [item.status for item in report.results] == ["failed", "failed", "not_attempted"]
@@ -163,7 +173,9 @@ def test_disconnect_does_not_retry_or_signal_remaining_targets(connection: Mock)
 
 
 @pytest.mark.parametrize("still_present,expected", [(True, "failed"), (False, "gone")])
-def test_failed_signal_is_rechecked(connection: Mock, still_present: bool, expected: str) -> None:
+def test_failed_signal_is_rechecked(
+    connection: Mock, still_present: bool, expected: str, settings: Settings
+) -> None:
     connection.execute.side_effect = [
         rows(target()),
         rows(target()),
@@ -171,6 +183,6 @@ def test_failed_signal_is_rechecked(connection: Mock, still_present: bool, expec
         rows(target()) if still_present else rows(),
     ]
     report = postgres.kill_sessions(
-        parse_dsn("postgresql+psycopg://admin:private@localhost/app"), settings=load_settings()
+        parse_dsn("postgresql+psycopg://admin:private@localhost/app"), settings=settings
     )
     assert report.results[0].status == expected

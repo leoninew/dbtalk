@@ -16,7 +16,7 @@ from dbtalk.cli import cli
 from dbtalk.database.dsn import parse_dsn
 from dbtalk.database.models import DatabaseOperationError
 from dbtalk.database.sessions import SessionKillReport, SessionKillResult
-from dbtalk.settings import SessionConfig, load_session_config, load_settings
+from dbtalk.settings import Settings, load_session_config
 
 
 @pytest.mark.parametrize(
@@ -222,20 +222,10 @@ def test_session_configuration_is_validated_centrally(raw: object) -> None:
         load_session_config({} if raw is None else {"poll_interval_seconds": raw})
 
 
-def test_session_yaml_and_env_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert load_settings().session.poll_interval_seconds == 0.1
-    monkeypatch.setenv("DBTALK_SESSION__POLL_INTERVAL_SECONDS", "0.35")
-    assert load_settings().session == SessionConfig(poll_interval_seconds=0.35)
-    monkeypatch.setenv("DBTALK_SESSION__POLL_INTERVAL_SECONDS", "0")
-    with pytest.raises(ValueError, match="session.poll_interval_seconds"):
-        load_settings()
-
-
 @pytest.mark.parametrize("dialect", ["postgresql", "mysql"])
 def test_management_connection_uses_configured_io_budget_and_always_disposes(
-    monkeypatch: pytest.MonkeyPatch, dialect: str
+    monkeypatch: pytest.MonkeyPatch, dialect: str, settings: Settings
 ) -> None:
-    settings = load_settings()
     settings = replace(
         settings,
         database=replace(settings.database, query_timeout_seconds=7, exec_timeout_seconds=9),

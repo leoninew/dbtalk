@@ -68,7 +68,7 @@ Stage: Plan / 计划
 先运行聚焦测试，再运行仓库质量入口：
 
 ```bash
-uv run --locked --no-sync pytest tests/test_database_transfer.py tests/test_database_transfer_contract.py tests/test_database_transfer_batching.py tests/test_database_transfer_logging.py
+uv run --locked --no-sync pytest tests/test_database_transfer.py tests/test_cli.py tests/test_database_transfer_batching.py tests/test_database_transfer_logging.py
 make check
 make test
 git diff --check

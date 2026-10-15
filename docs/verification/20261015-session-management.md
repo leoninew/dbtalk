@@ -1,11 +1,13 @@
 # Verification / 验证：PostgreSQL 与 MySQL 会话查看和终止
-最后修改时间: 2026-10-15 11:55:10
+最后修改时间: 2026-10-15 12:17:19
 
 ## Review status / 审查状态
 
 Accepted
 
 用户已确认“验证有效”，并要求完成本报告。本文结合用户确认、当前代码及文档核对、实施阶段隔离实验和本轮 Cygwin 质量检查形成验收结论；不将用户确认扩展为未说明环境或场景的实测证据。
+
+后续测试清理删除了通过替换内部 `_read` 制造切库时机的重复集成用例，切库保护仍由 MySQL 单元测试覆盖，原生会话集成现为两种引擎各两项。下方保留验收时的历史命令、数量与证据；当前结果见[测试清理记录](20261015-test-suite-cleanup.md)。
 
 ## Intent alignment / 意图对齐
 
@@ -25,7 +27,7 @@ PostgreSQL 从 pg_stat_activity 读取普通客户端，以 PID / backend_start 
 
 不适用。本功能始终为单任务，主会话顺序实现和核对，未创建 task、分配记录或子 agent。
 
-验收基线为 `d8e21d9` 加当前工作区实际文件，包含用户已暂存的功能变更及本轮过程文档修订。Makefile 与基线一致，重建的本地 .venv 不进入 Git diff。核对采用 `git diff HEAD`，同时检查新增文件，避免遗漏暂存区；未修改用户的暂存安排，未提交或发布。
+实施验收基线为 `d8e21d9` 加当时的工作区实际文件，核对包含用户已暂存的功能变更。功能现已位于提交 `3ba5b9b`；本轮仅补充环境重建、检查结果及备份清理记录。Makefile 与实施基线一致，重建的本地 .venv 不进入 Git diff；agent 未执行暂存、提交或发布。
 
 ## Actual diff summary / 实际差异摘要
 
@@ -82,7 +84,8 @@ PostgreSQL 从 pg_stat_activity 读取普通客户端，以 PID / backend_start 
 | 修复后 `make check` 的 Ruff format | 通过，74 files already formatted。 |
 | 修复后 `make check` 的 Ruff check | 通过，All checks passed。 |
 | 修复后 `make check` 的 Mypy | 通过，75 source files 无问题。 |
-| 修复后 `make test` | 476 项收集，460 passed、16 skipped，55.76 秒；target 退出码 0。 |
+| 修复后 `make test` | 476 项收集，460 passed、16 skipped，51.06 秒；target 退出码 0。 |
+| 旧环境清理 | 按用户要求删除旧 .venv 备份；仓库原备份路径和临时移动路径均已不存在，当前 .venv 保留。 |
 | `git diff HEAD --check`、`git diff --cached --check` | 通过，覆盖当前工作区与原有暂存内容。 |
 | 同名三份过程文档及链接核对 | 状态、阶段、模板章节和本地引用一致。 |
 
@@ -106,7 +109,7 @@ PostgreSQL 从 pg_stat_activity 读取普通客户端，以 PID / backend_start 
 
 用户追加的外部说明位于 `D:\Documents\documents\Obsidian\解决方案\dbtalk\PostgreSQL常用操作.md`、同目录 `MySQL常用操作.md`：增加 session list、按 ID / 批量 kill、可选 wait、权限与配置语义，沿用文件内变量声明。编辑前后原有 export 声明的 SHA-256 校验值一致，包含 DSN、密码和原有变量；六段新增命令通过 Click 参数解析核对，未为文档检查执行数据库操作。
 
-本地环境重建来自用户报告的实际启动失败及随后明确授权。重建使用既有 Python 和锁定依赖，临时保留旧环境以便失败时恢复，通过后清理；最终无 Makefile、锁文件或包版本变更，不扩大业务功能或引入兼容分支。当前报告反映包含暂存内容的全部功能 diff；未重新暂存、提交、安装用户级 CLI、同步插件或发布。
+本地环境重建来自用户报告的实际启动失败及随后明确授权。重建使用既有 Python 和锁定依赖；检查通过后，按用户“不用备份”的要求已删除旧环境备份，仅保留新 .venv。最终无 Makefile、锁文件或包版本变更，不扩大业务功能或引入兼容分支。报告保留完整功能验收证据；本轮未执行暂存、提交、安装用户级 CLI、同步插件或发布。
 
 ## Risks / 风险
 

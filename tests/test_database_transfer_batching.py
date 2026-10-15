@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC
 from pathlib import Path
 from typing import Any
@@ -14,7 +14,13 @@ from sqlalchemy.engine import Connection, Engine
 
 from dbtalk.database import sqlalchemy_transfer as adapter
 from dbtalk.database.dsn import ParsedDsn, dsn_from_environment
-from dbtalk.database.format import TRANSFER_FORMAT, encode_value, scan_document, write_document
+from dbtalk.database.format import (
+    TRANSFER_FORMAT,
+    encode_value,
+    read_document,
+    scan_document,
+    write_document,
+)
 from dbtalk.database.models import (
     ColumnDefinition,
     DatabaseTransferError,
@@ -30,14 +36,19 @@ from dbtalk.database.models import (
     TransferMode,
 )
 from dbtalk.database.transfer import export_database, import_database
+from tests.sqlite_helpers import MemoryDatabase
 
 
 @pytest.fixture
-def engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Engine]:
-    engine = create_engine(f"sqlite:///{tmp_path / 'target.db'}")
+def engine(
+    sqlite_database: Callable[[], MemoryDatabase], monkeypatch: pytest.MonkeyPatch
+) -> Iterator[Engine]:
+    engine = create_engine(sqlite_database().dsn)
     monkeypatch.setattr(adapter, "_create_engine", lambda parsed: engine)
-    yield engine
-    engine.dispose()
+    try:
+        yield engine
+    finally:
+        engine.dispose()
 
 
 def _write_transfer(path: Path, *tables: TableBlock) -> Path:
@@ -285,7 +296,7 @@ def test_export_streams_and_closes_result(
     "DBTALK_DSN_BATCH_TEST" not in os.environ,
     reason="requires DBTALK_DSN_BATCH_TEST pointing to an isolated PostgreSQL test database",
 )
-def test_postgres_batch_upsert_pipeline_and_streaming(
+def test_postgres_batch_upsert_and_streaming(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import psycopg
@@ -297,14 +308,6 @@ def test_postgres_batch_upsert_pipeline_and_streaming(
     monkeypatch.setattr(adapter, "_create_engine", lambda dsn: engine)
     monkeypatch.setattr(adapter, "BATCH_SIZE", 2)
     calls = _insert_calls(engine)
-    pipelines: list[bool] = []
-    pipeline = psycopg.Connection._pipeline_nolock
-
-    def capture_pipeline(connection: Any) -> Any:
-        pipelines.append(True)
-        return pipeline(connection)
-
-    monkeypatch.setattr(psycopg.Connection, "_pipeline_nolock", capture_pipeline)
     cursors: list[Any] = []
     encoded_rows = adapter._encoded_rows
 
@@ -316,7 +319,7 @@ def test_postgres_batch_upsert_pipeline_and_streaming(
         progress: adapter._TableProgress | None = None,
     ) -> Iterator[tuple[JSONValue, ...]]:
         cursors.append(result.cursor)
-        assert result.context._is_server_side
+        assert isinstance(result.cursor, psycopg.ServerCursor)
         yield from encoded_rows(result, table, options, dsn, progress)
 
     monkeypatch.setattr(adapter, "_encoded_rows", observe)
@@ -341,19 +344,14 @@ def test_postgres_batch_upsert_pipeline_and_streaming(
         )
         assert len(calls) == 2
         assert all(many for _, _, many in calls)
-        if psycopg.pq.version() >= 140000:
-            assert pipelines
         with engine.connect() as connection:
             assert connection.exec_driver_sql("SELECT * FROM items ORDER BY id").tuples().all() == [
                 (1, "third"),
                 (2, "new"),
             ]
-        assert (
-            export_database(
-                ExportOptions(connection_options, tmp_path / "export.jsonl", UTC)
-            ).row_count
-            == 2
-        )
+        output = tmp_path / "export.jsonl"
+        assert export_database(ExportOptions(connection_options, output, UTC)).row_count == 2
+        assert sorted(read_document(output).tables[0].rows) == [(1, "third"), (2, "new")]
         assert len(cursors) == 1
         assert cursors[0].closed
     finally:

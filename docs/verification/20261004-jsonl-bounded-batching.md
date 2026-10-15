@@ -5,6 +5,8 @@ Review status: Accepted
 Flow mode: standard / 标准模式
 Stage: Verification / 验证
 
+2026-10-15 测试清理后，历史命令中的 `test_database_transfer_contract.py` 已移除，CLI 行为收敛到 `test_cli.py` 与实际传输测试；原生聚焦测试现名为 `test_postgres_batch_upsert_and_streaming`，不再断言驱动私有 pipeline 实现。下方保留当时的实测命令与结果；当前清单和验证见[测试清理记录](20261015-test-suite-cleanup.md)。
+
 ## Intent alignment
 
 依据已接受的 [意图](../requirement/20261004-jsonl-bounded-batching.md) 核对：PostgreSQL、SQLite 的 JSONL 导入采用有界参数批次，upsert 以完整主键执行原生冲突处理；导出显式启用流式读取并关闭结果集，日志区分待提交与整表提交。目标类型转换已纳入首遍预检，继续保留 JSONL v1、gzip、输入顺序、双遍读取和单表事务。

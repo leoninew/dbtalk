@@ -1,5 +1,5 @@
 # Plan / 计划：PostgreSQL 与 MySQL 会话查看和终止
-最后修改时间: 2026-10-15 11:55:10
+最后修改时间: 2026-10-15 12:17:19
 
 ## Review status / 审查状态
 
@@ -281,5 +281,5 @@ python -m pytest tests/test_session_integration.py -q --tb=short
 - 用户补充要求更新的外部 PostgreSQL / MySQL 常用操作文档已完成，新增连接查看、单 ID / 批量终止、等待和配置说明；变量直接声明在文件中，原有声明的 SHA-256 校验值一致，包括 DSN 和密码。六段命令已按 Click 参数解析核对，未执行数据库操作。外部文件不进入仓库 diff。
 - 用户随后确认功能有效并要求完成验证记录。已按 Intent A01–A09 核对代码、测试、仓库文档和后续授权的外部说明，保持单任务，不新增 task。
 - Windows uv trampoline 错误已定位：mypy.exe / pytest.exe 内嵌的解释器仍在原 pomelo-dbtalk 目录，该路径已不存在。先前临时采用 python -m 绕过并通过检查（460 passed、16 skipped，55.76 秒）；用户要求修复环境并恢复 Makefile，最终不保留该绕过变更。
-- 已恢复原始 Makefile，以原 Python 3.12.10 执行 `uv sync --locked --all-groups --python <原基础解释器> --no-python-downloads --offline` 重建 .venv。uv.lock 的 SHA-256 及全部 41 个包的版本与重建前一致，新启动器引用当前 dbtalk 目录；mypy、pytest 和 dbtalk 的直接版本命令均成功。最终原始 make check/test 的结果以 Verification 为准。
+- 已恢复原始 Makefile，以原 Python 3.12.10 执行 `uv sync --locked --all-groups --python <原基础解释器> --no-python-downloads --offline` 重建 .venv。uv.lock 的 SHA-256 及全部 41 个包的版本与重建前一致，新启动器引用当前 dbtalk 目录；mypy、pytest 和 dbtalk 的直接版本命令均成功。Cygwin 下原始 make check/test 均通过，pytest 为 460 passed、16 skipped，51.06 秒。按用户要求已删除旧环境备份，仅保留新 .venv。
 - 先前单独运行的原生 session 实验为 5 passed、1 个不适用 skip；环境修复未重复启动数据库实例，也未改变会话功能实现。整体验证结论 Accepted，详见同名报告。

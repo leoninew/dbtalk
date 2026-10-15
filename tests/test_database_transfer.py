@@ -13,10 +13,10 @@ from pathlib import Path
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
+import pytest
 from click.testing import CliRunner
 
 from dbtalk.cli import cli as main
-from dbtalk.database.dsn import sqlite_dsn
 from dbtalk.database.mysql import (
     _encode_mysql_value,
     _mysql_time_of_day,
@@ -40,6 +40,7 @@ from dbtalk.database.transfer import (
     read_jsonl,
     write_jsonl,
 )
+from tests.sqlite_helpers import MemoryDatabase, memory_database
 
 
 class DatabaseTransferTests(unittest.TestCase):
@@ -47,11 +48,11 @@ class DatabaseTransferTests(unittest.TestCase):
         runner = CliRunner()
 
         with runner.isolated_filesystem():
-            source = Path("source.db")
-            target = Path("target.db")
+            source = self.enterContext(memory_database())
+            target = self.enterContext(memory_database())
             self._create_schema(source)
             self._create_schema(target)
-            source_connection = sqlite3.connect(source)
+            source_connection = source.connect()
             source_connection.execute("INSERT INTO parent(id, name) VALUES (1, 'Ada')")
             source_connection.commit()
             source_connection.close()
@@ -63,7 +64,7 @@ class DatabaseTransferTests(unittest.TestCase):
                     "--source",
                     "sqlite",
                     "--dsn",
-                    f"sqlite:///{source.as_posix()}",
+                    source.dsn,
                     "--output",
                     "transfer.jsonl",
                     "--archive",
@@ -77,7 +78,7 @@ class DatabaseTransferTests(unittest.TestCase):
                     "--target",
                     "sqlite",
                     "--dsn",
-                    f"sqlite:///{target.as_posix()}",
+                    target.dsn,
                     "--input",
                     str(compressed_output),
                     "--mode",
@@ -90,7 +91,7 @@ class DatabaseTransferTests(unittest.TestCase):
             with gzip.open(compressed_output, "rt", encoding="utf-8") as compressed:
                 self.assertIn('"kind":"header"', compressed.readline())
             self.assertEqual(imported.exit_code, 0, imported.output)
-            target_connection = sqlite3.connect(target)
+            target_connection = target.connect()
             self.assertEqual(
                 target_connection.execute("SELECT name FROM parent WHERE id = 1").fetchone(),
                 ("Ada",),
@@ -100,12 +101,12 @@ class DatabaseTransferTests(unittest.TestCase):
     def test_sqlite_export_and_upsert_preserves_portable_values(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = root / "source.db"
-            target = root / "target.db"
+            source = self.enterContext(memory_database())
+            target = self.enterContext(memory_database())
             transfer = root / "nested" / "transfer.jsonl"
             self._create_schema(source)
             self._create_schema(target)
-            source_connection = sqlite3.connect(source)
+            source_connection = source.connect()
             source_connection.execute(
                 "INSERT INTO parent VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
@@ -121,21 +122,21 @@ class DatabaseTransferTests(unittest.TestCase):
             source_connection.execute("INSERT INTO child VALUES (10, 1, 'child')")
             source_connection.commit()
             source_connection.close()
-            target_connection = sqlite3.connect(target)
+            target_connection = target.connect()
             target_connection.execute("INSERT INTO parent(id, name) VALUES (1, 'old target value')")
             target_connection.commit()
             target_connection.close()
 
             exported = export_database(
                 ExportOptions(
-                    TransferConnection("sqlite", dsn=sqlite_dsn(source)),
+                    TransferConnection("sqlite", dsn=source.dsn),
                     transfer,
                     ZoneInfo("Asia/Shanghai"),
                 )
             )
             imported = import_database(
                 ImportOptions(
-                    TransferConnection("sqlite", dsn=sqlite_dsn(target)),
+                    TransferConnection("sqlite", dsn=target.dsn),
                     transfer,
                     "upsert",
                     ZoneInfo("UTC"),
@@ -152,7 +153,7 @@ class DatabaseTransferTests(unittest.TestCase):
                 {"$type": "decimal", "value": "123456789.12345679"},
             )
             self.assertEqual(records[2]["values"][6], {"$type": "blob", "base64": "cGF5bG9hZA=="})
-            target_connection = sqlite3.connect(target)
+            target_connection = target.connect()
             self.assertEqual(
                 target_connection.execute(
                     "SELECT name, amount, happened, day, at, payload FROM parent"
@@ -175,19 +176,19 @@ class DatabaseTransferTests(unittest.TestCase):
     def test_insert_rejects_primary_key_conflict(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = root / "source.db"
-            target = root / "target.db"
+            source = self.enterContext(memory_database())
+            target = self.enterContext(memory_database())
             transfer = root / "transfer.jsonl"
             self._create_schema(source)
             self._create_schema(target)
             for path, name in ((source, "source"), (target, "target")):
-                connection = sqlite3.connect(path)
+                connection = path.connect()
                 connection.execute("INSERT INTO parent(id, name) VALUES (1, ?)", (name,))
                 connection.commit()
                 connection.close()
             export_database(
                 ExportOptions(
-                    TransferConnection("sqlite", dsn=sqlite_dsn(source)),
+                    TransferConnection("sqlite", dsn=source.dsn),
                     transfer,
                     ZoneInfo("UTC"),
                 )
@@ -196,14 +197,14 @@ class DatabaseTransferTests(unittest.TestCase):
             with self.assertRaisesRegex(DatabaseTransferError, "parent"):
                 import_database(
                     ImportOptions(
-                        TransferConnection("sqlite", dsn=sqlite_dsn(target)),
+                        TransferConnection("sqlite", dsn=target.dsn),
                         transfer,
                         "insert",
                         ZoneInfo("UTC"),
                     )
                 )
 
-            connection = sqlite3.connect(target)
+            connection = target.connect()
             self.assertEqual(
                 connection.execute("SELECT name FROM parent WHERE id = 1").fetchone(),
                 ("target",),
@@ -213,9 +214,9 @@ class DatabaseTransferTests(unittest.TestCase):
     def test_upsert_rejects_table_without_primary_key_before_writing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            target = root / "target.db"
+            target = self.enterContext(memory_database())
             transfer = root / "transfer.jsonl"
-            connection = sqlite3.connect(target)
+            connection = target.connect()
             connection.execute("CREATE TABLE logs(message TEXT)")
             connection.commit()
             connection.close()
@@ -230,22 +231,22 @@ class DatabaseTransferTests(unittest.TestCase):
             with self.assertRaisesRegex(DatabaseTransferError, "no primary key"):
                 import_database(
                     ImportOptions(
-                        TransferConnection("sqlite", dsn=sqlite_dsn(target)),
+                        TransferConnection("sqlite", dsn=target.dsn),
                         transfer,
                         "upsert",
                         ZoneInfo("UTC"),
                     )
                 )
-            connection = sqlite3.connect(target)
+            connection = target.connect()
             self.assertEqual(connection.execute("SELECT * FROM logs").fetchall(), [])
             connection.close()
 
     def test_insert_allows_table_without_primary_key(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            target = root / "target.db"
+            target = self.enterContext(memory_database())
             transfer = root / "transfer.jsonl"
-            connection = sqlite3.connect(target)
+            connection = target.connect()
             connection.execute("CREATE TABLE logs(message TEXT)")
             connection.commit()
             connection.close()
@@ -259,33 +260,33 @@ class DatabaseTransferTests(unittest.TestCase):
 
             import_database(
                 ImportOptions(
-                    TransferConnection("sqlite", dsn=sqlite_dsn(target)),
+                    TransferConnection("sqlite", dsn=target.dsn),
                     transfer,
                     "insert",
                     ZoneInfo("UTC"),
                 )
             )
 
-            connection = sqlite3.connect(target)
+            connection = target.connect()
             self.assertEqual(connection.execute("SELECT * FROM logs").fetchall(), [("inserted",)])
             connection.close()
 
     def test_import_excludes_selected_tables_before_preflight_and_writing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = root / "source.db"
-            target = root / "target.db"
+            source = self.enterContext(memory_database())
+            target = self.enterContext(memory_database())
             transfer = root / "transfer.jsonl"
             self._create_schema(source)
             self._create_schema(target)
-            source_connection = sqlite3.connect(source)
+            source_connection = source.connect()
             source_connection.execute("INSERT INTO parent(id, name) VALUES (1, 'parent')")
             source_connection.execute("INSERT INTO child VALUES (10, 1, 'child')")
             source_connection.commit()
             source_connection.close()
             export_database(
                 ExportOptions(
-                    TransferConnection("sqlite", dsn=sqlite_dsn(source)),
+                    TransferConnection("sqlite", dsn=source.dsn),
                     transfer,
                     ZoneInfo("UTC"),
                 )
@@ -293,7 +294,7 @@ class DatabaseTransferTests(unittest.TestCase):
 
             imported = import_database(
                 ImportOptions(
-                    TransferConnection("sqlite", dsn=sqlite_dsn(target)),
+                    TransferConnection("sqlite", dsn=target.dsn),
                     transfer,
                     "insert",
                     ZoneInfo("UTC"),
@@ -303,7 +304,7 @@ class DatabaseTransferTests(unittest.TestCase):
 
             self.assertEqual(imported.table_count, 1)
             self.assertEqual(imported.row_count, 1)
-            target_connection = sqlite3.connect(target)
+            target_connection = target.connect()
             self.assertEqual(
                 target_connection.execute("SELECT id, name FROM parent").fetchall(),
                 [(1, "parent")],
@@ -314,10 +315,10 @@ class DatabaseTransferTests(unittest.TestCase):
     def test_export_excludes_selected_tables_before_reading_rows(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = root / "source.db"
+            source = self.enterContext(memory_database())
             transfer = root / "transfer.jsonl"
             self._create_schema(source)
-            connection = sqlite3.connect(source)
+            connection = source.connect()
             connection.execute("INSERT INTO parent(id, name) VALUES (1, 'parent')")
             connection.execute("INSERT INTO child VALUES (10, 1, 'child')")
             connection.commit()
@@ -325,7 +326,7 @@ class DatabaseTransferTests(unittest.TestCase):
 
             exported = export_database(
                 ExportOptions(
-                    TransferConnection("sqlite", dsn=sqlite_dsn(source)),
+                    TransferConnection("sqlite", dsn=source.dsn),
                     transfer,
                     ZoneInfo("UTC"),
                     ("child",),
@@ -341,10 +342,10 @@ class DatabaseTransferTests(unittest.TestCase):
     def test_include_tables_are_filtered_before_exclude_tables(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = root / "source.db"
+            source = self.enterContext(memory_database())
             transfer = root / "transfer.jsonl"
             self._create_schema(source)
-            connection = sqlite3.connect(source)
+            connection = source.connect()
             connection.execute("INSERT INTO parent(id, name) VALUES (1, 'parent')")
             connection.execute("INSERT INTO child VALUES (10, 1, 'child')")
             connection.commit()
@@ -352,7 +353,7 @@ class DatabaseTransferTests(unittest.TestCase):
 
             summary = export_database(
                 ExportOptions(
-                    TransferConnection("sqlite", dsn=sqlite_dsn(source)),
+                    TransferConnection("sqlite", dsn=source.dsn),
                     transfer,
                     ZoneInfo("UTC"),
                     include_tables=("parent", "child"),
@@ -368,14 +369,14 @@ class DatabaseTransferTests(unittest.TestCase):
     def test_export_blocks_selected_child_without_parent_before_writing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = root / "source.db"
+            source = self.enterContext(memory_database())
             transfer = root / "transfer.jsonl"
             self._create_schema(source)
 
             with self.assertRaisesRegex(DatabaseTransferError, "unselected"):
                 export_database(
                     ExportOptions(
-                        TransferConnection("sqlite", dsn=sqlite_dsn(source)),
+                        TransferConnection("sqlite", dsn=source.dsn),
                         transfer,
                         ZoneInfo("UTC"),
                         include_tables=("child",),
@@ -387,7 +388,7 @@ class DatabaseTransferTests(unittest.TestCase):
     def test_import_blocks_selected_child_without_parent_before_writing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            target = root / "target.db"
+            target = self.enterContext(memory_database())
             transfer = root / "transfer.jsonl"
             self._create_schema(target)
             self._write_transfer(
@@ -405,28 +406,28 @@ class DatabaseTransferTests(unittest.TestCase):
             with self.assertRaisesRegex(DatabaseTransferError, "unselected"):
                 import_database(
                     ImportOptions(
-                        TransferConnection("sqlite", dsn=sqlite_dsn(target)),
+                        TransferConnection("sqlite", dsn=target.dsn),
                         transfer,
                         "insert",
                         ZoneInfo("UTC"),
                     )
                 )
 
-            connection = sqlite3.connect(target)
+            connection = target.connect()
             self.assertEqual(connection.execute("SELECT * FROM child").fetchall(), [])
             connection.close()
 
     def test_export_rejects_an_excluded_table_not_in_source_database(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = root / "source.db"
+            source = self.enterContext(memory_database())
             transfer = root / "transfer.jsonl"
             self._create_schema(source)
 
             with self.assertRaisesRegex(DatabaseTransferError, "source database"):
                 export_database(
                     ExportOptions(
-                        TransferConnection("sqlite", dsn=sqlite_dsn(source)),
+                        TransferConnection("sqlite", dsn=source.dsn),
                         transfer,
                         ZoneInfo("UTC"),
                         ("missing",),
@@ -436,9 +437,9 @@ class DatabaseTransferTests(unittest.TestCase):
     def test_import_rejects_an_excluded_table_not_in_transfer_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            target = root / "target.db"
+            target = self.enterContext(memory_database())
             transfer = root / "transfer.jsonl"
-            connection = sqlite3.connect(target)
+            connection = target.connect()
             connection.execute("CREATE TABLE users(id INTEGER PRIMARY KEY)")
             connection.commit()
             connection.close()
@@ -453,7 +454,7 @@ class DatabaseTransferTests(unittest.TestCase):
             with self.assertRaisesRegex(DatabaseTransferError, "excluded table"):
                 import_database(
                     ImportOptions(
-                        TransferConnection("sqlite", dsn=sqlite_dsn(target)),
+                        TransferConnection("sqlite", dsn=target.dsn),
                         transfer,
                         "insert",
                         ZoneInfo("UTC"),
@@ -464,9 +465,9 @@ class DatabaseTransferTests(unittest.TestCase):
     def test_upsert_matches_a_complete_composite_primary_key(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            target = root / "target.db"
+            target = self.enterContext(memory_database())
             transfer = root / "transfer.jsonl"
-            connection = sqlite3.connect(target)
+            connection = target.connect()
             connection.execute(
                 "CREATE TABLE pairs("
                 "left_id INTEGER, right_id INTEGER, value TEXT, "
@@ -489,14 +490,14 @@ class DatabaseTransferTests(unittest.TestCase):
 
             import_database(
                 ImportOptions(
-                    TransferConnection("sqlite", dsn=sqlite_dsn(target)),
+                    TransferConnection("sqlite", dsn=target.dsn),
                     transfer,
                     "upsert",
                     ZoneInfo("UTC"),
                 )
             )
 
-            connection = sqlite3.connect(target)
+            connection = target.connect()
             self.assertEqual(
                 connection.execute(
                     "SELECT left_id, right_id, value FROM pairs ORDER BY right_id"
@@ -510,9 +511,9 @@ class DatabaseTransferTests(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            target = root / "target.db"
+            target = self.enterContext(memory_database())
             transfer = root / "transfer.jsonl"
-            connection = sqlite3.connect(target)
+            connection = target.connect()
             connection.execute("CREATE TABLE kept(id INTEGER PRIMARY KEY, value TEXT)")
             connection.commit()
             connection.close()
@@ -537,22 +538,22 @@ class DatabaseTransferTests(unittest.TestCase):
             with self.assertRaisesRegex(DatabaseTransferError, "does not exist"):
                 import_database(
                     ImportOptions(
-                        TransferConnection("sqlite", dsn=sqlite_dsn(target)),
+                        TransferConnection("sqlite", dsn=target.dsn),
                         transfer,
                         "insert",
                         ZoneInfo("UTC"),
                     )
                 )
-            connection = sqlite3.connect(target)
+            connection = target.connect()
             self.assertEqual(connection.execute("SELECT * FROM kept").fetchall(), [])
             connection.close()
 
     def test_later_table_failure_rolls_back_that_block_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            target = root / "target.db"
+            target = self.enterContext(memory_database())
             transfer = root / "transfer.jsonl"
-            connection = sqlite3.connect(target)
+            connection = target.connect()
             connection.executescript(
                 """
                 CREATE TABLE committed(id INTEGER PRIMARY KEY, value TEXT);
@@ -606,13 +607,13 @@ class DatabaseTransferTests(unittest.TestCase):
             with self.assertRaisesRegex(DatabaseTransferError, "rejected"):
                 import_database(
                     ImportOptions(
-                        TransferConnection("sqlite", dsn=sqlite_dsn(target)),
+                        TransferConnection("sqlite", dsn=target.dsn),
                         transfer,
                         "insert",
                         ZoneInfo("UTC"),
                     )
                 )
-            connection = sqlite3.connect(target)
+            connection = target.connect()
             self.assertEqual(
                 connection.execute("SELECT * FROM committed").fetchall(), [(1, "kept")]
             )
@@ -622,9 +623,9 @@ class DatabaseTransferTests(unittest.TestCase):
     def test_invalid_jsonl_never_creates_a_partial_import(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            target = root / "target.db"
+            target = self.enterContext(memory_database())
             transfer = root / "transfer.jsonl"
-            connection = sqlite3.connect(target)
+            connection = target.connect()
             connection.execute("CREATE TABLE values_table(id INTEGER PRIMARY KEY)")
             connection.commit()
             connection.close()
@@ -638,7 +639,7 @@ class DatabaseTransferTests(unittest.TestCase):
             with self.assertRaisesRegex(DatabaseTransferError, "missing its end"):
                 import_database(
                     ImportOptions(
-                        TransferConnection("sqlite", dsn=sqlite_dsn(target)),
+                        TransferConnection("sqlite", dsn=target.dsn),
                         transfer,
                         "insert",
                         ZoneInfo("UTC"),
@@ -686,6 +687,7 @@ class DatabaseTransferTests(unittest.TestCase):
 
     def test_mysql_time_duration_must_fit_a_portable_time_of_day(self) -> None:
         self.assertEqual(_mysql_time_of_day(timedelta(hours=8, minutes=9)), "08:09:00")
+        self.assertEqual(_mysql_time_of_day(timedelta(microseconds=120000)), "00:00:00.12")
         with self.assertRaisesRegex(DatabaseTransferError, "time-of-day"):
             _mysql_time_of_day(timedelta(hours=24))
 
@@ -713,6 +715,7 @@ class DatabaseTransferTests(unittest.TestCase):
         with self.assertRaisesRegex(DatabaseTransferError, "zero date"):
             _encode_mysql_value("0000-00-00 00:00:00", "DATETIME", disabled_options)
 
+    @pytest.mark.usefixtures("real_cli_settings")
     def test_cli_passes_zero_date_configuration_to_mysql_export(self) -> None:
         with (
             patch(
@@ -764,32 +767,6 @@ class DatabaseTransferTests(unittest.TestCase):
             )
         self.assertTrue(compatible_types("UUID", "uuid"))
         self.assertFalse(compatible_types("UUID", "CHAR(36)"))
-
-    def test_transfer_always_uses_the_sqlalchemy_adapter(self) -> None:
-        options = ExportOptions(
-            TransferConnection("mysql", dsn="mysql+pymysql://user:pass@db.test:3306/app"),
-            Path("transfer.jsonl"),
-            ZoneInfo("UTC"),
-        )
-        with patch(
-            "dbtalk.database.transfer.export_sqlalchemy",
-            return_value=TransferSummary(table_count=1, row_count=2),
-        ) as export:
-            self.assertEqual(export_database(options).row_count, 2)
-        export.assert_called_once_with(options)
-
-        import_options = ImportOptions(
-            options.connection,
-            Path("transfer.jsonl"),
-            "upsert",
-            ZoneInfo("UTC"),
-        )
-        with patch(
-            "dbtalk.database.transfer.import_sqlalchemy",
-            return_value=TransferSummary(table_count=1, row_count=2),
-        ) as importer:
-            self.assertEqual(import_database(import_options).row_count, 2)
-        importer.assert_called_once_with(import_options)
 
     def test_cli_hides_mysql_dsn_value_from_errors(self) -> None:
         result = CliRunner().invoke(
@@ -909,8 +886,8 @@ class DatabaseTransferTests(unittest.TestCase):
             self.assertIn(str(directory_outputs[0].resolve()), directory_export.output)
 
     @staticmethod
-    def _create_schema(path: Path) -> None:
-        connection = sqlite3.connect(path)
+    def _create_schema(database: MemoryDatabase) -> None:
+        connection = database.connect()
         connection.executescript(
             """
             PRAGMA foreign_keys = ON;

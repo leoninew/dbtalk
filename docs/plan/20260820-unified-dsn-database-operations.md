@@ -140,7 +140,7 @@ dbtalk database import --target sqlite|mysql|postgresql ...
 - `tests/test_database_operations.py`
 - `tests/test_database_cli.py`
 - `tests/test_database_transfer.py`
-- `tests/test_database_transfer_contract.py`
+- `tests/test_cli.py`
 - `tests/test_database_transfer_logging.py`
 - `tests/test_unit_boundaries.py`
 - `README.md`
