@@ -39,9 +39,9 @@ class ParsedDsn:
 
     @property
     def display(self) -> str:
-        """Return a password-redacted URL for logs and diagnostics."""
+        """Return a URL without passwords or query parameters for diagnostics."""
 
-        return self.url.render_as_string(hide_password=True)
+        return self.url.set(query={}).render_as_string(hide_password=True)
 
     @property
     def database(self) -> str | None:

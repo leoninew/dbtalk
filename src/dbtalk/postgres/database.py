@@ -56,16 +56,28 @@ def create_command(dsn_value: str | None, dsn_env: str | None, name: str) -> Non
 @click.option("--dsn-env", help="Environment variable containing the PostgreSQL DSN.")
 @click.option("--name", required=True, help="Database name.")
 @click.option("--if-exists", is_flag=True, help="Succeed if the database does not exist.")
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Attempt to terminate target database connections before dropping it.",
+)
 @click.option("--yes", is_flag=True, help="Confirm database deletion.")
 def drop_command(
-    dsn_value: str | None, dsn_env: str | None, name: str, if_exists: bool, yes: bool
+    dsn_value: str | None,
+    dsn_env: str | None,
+    name: str,
+    if_exists: bool,
+    force: bool,
+    yes: bool,
 ) -> None:
     """Delete one PostgreSQL database."""
 
     if not yes:
         raise click.UsageError("--yes is required to drop a database")
     try:
-        drop_database(resolve_management_dsn(dsn_value, dsn_env), name, if_exists=if_exists)
+        drop_database(
+            resolve_management_dsn(dsn_value, dsn_env), name, if_exists=if_exists, force=force
+        )
     except DatabaseOperationError as error:
         raise click.ClickException(str(error)) from error
     action = "dropped if it existed" if if_exists else "dropped"
@@ -123,24 +135,30 @@ def create_database(parsed: ParsedDsn, name: str) -> None:
     )
 
 
-def drop_database(parsed: ParsedDsn, name: str, *, if_exists: bool = False) -> None:
+def drop_database(
+    parsed: ParsedDsn, name: str, *, if_exists: bool = False, force: bool = False
+) -> None:
     """Drop one PostgreSQL database after explicit CLI confirmation."""
 
     _validate_management_dsn(parsed)
     _validate_database_name(name)
     _run_management_operation(
-        parsed, lambda connection: _drop_database(connection, name, if_exists=if_exists)
+        parsed,
+        lambda connection: _drop_database(connection, name, if_exists=if_exists, force=force),
     )
 
 
-def _drop_database(connection: Connection, name: str, *, if_exists: bool) -> None:
+def _drop_database(connection: Connection, name: str, *, if_exists: bool, force: bool) -> None:
     current = _connected_database_name(connection)
     if current is not None and current == name:
         raise DatabaseOperationError(
             "PostgreSQL database deletion cannot target the currently connected database"
         )
     clause = " IF EXISTS" if if_exists else ""
-    connection.exec_driver_sql(f"DROP DATABASE{clause} {_quote_database_name(connection, name)}")
+    suffix = " WITH (FORCE)" if force else ""
+    connection.exec_driver_sql(
+        f"DROP DATABASE{clause} {_quote_database_name(connection, name)}{suffix}"
+    )
 
 
 def _connected_database_name(connection: Connection) -> str | None:

@@ -112,6 +112,7 @@ postgresql+psycopg://user:password@host:5432/app
 - [MySQL 手册](docs/mysql.md)：schema、用户、权限、dump 和 restore
 - [PostgreSQL 手册](docs/postgres.md)：schema、role、权限、dump 和 restore
 - [批量备份](docs/backup.md)：备份配置、按数据库组织目录和续跑
+- [操作日志](docs/logging.md)：记录范围、日志级别、输出流和脱敏边界
 
 ## Agent 集成
 

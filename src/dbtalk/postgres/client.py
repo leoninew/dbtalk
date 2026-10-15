@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import platform
 import shutil
@@ -132,7 +133,7 @@ def docker_postgres_image(image: str) -> tuple[str | None, str]:
     if result.returncode == 0:
         return image, ""
 
-    click.echo(f"Pulling configured PostgreSQL Docker image: {image}", err=True)
+    logging.info("Pulling configured PostgreSQL Docker image: %s", image)
     try:
         pull_result = subprocess.run(["docker", "pull", image], check=False)
     except OSError:

@@ -171,7 +171,7 @@ def database() -> None:
     """Internal command group for generic database operations and JSONL transfer."""
 
 
-@database.command("export", context_settings=CONTEXT_SETTINGS)
+@database.command("export", context_settings=CONTEXT_SETTINGS, log_lifecycle=False)
 @click.option(
     "--source",
     type=click.Choice(["sqlite", "mysql", "postgresql"]),
@@ -286,7 +286,7 @@ def export_command_arguments(options: dict[str, object]) -> ExportCommandArgumen
     )
 
 
-@database.command("import", context_settings=CONTEXT_SETTINGS)
+@database.command("import", context_settings=CONTEXT_SETTINGS, log_lifecycle=False)
 @click.option(
     "--target",
     type=click.Choice(["sqlite", "mysql", "postgresql"]),

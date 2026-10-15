@@ -112,6 +112,7 @@ Every command accepts exactly one of `--dsn DSN` or `--dsn-env NAME`; `--dsn` re
 - [MySQL guide](docs/mysql.md): schemas, users, permissions, dump, and restore
 - [PostgreSQL guide](docs/postgres.md): schemas, roles, permissions, dump, and restore
 - [Batch backups](docs/backup.md): configured backups, database directories, and resume
+- [Operation logs](docs/logging.md): coverage, levels, output streams, and redaction
 
 ## Agent integration
 

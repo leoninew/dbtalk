@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import replace
 from datetime import datetime
@@ -318,6 +319,7 @@ def test_dump_rejects_a_missing_explicit_output_parent(tmp_path: Path) -> None:
 
 def test_docker_helpers_use_host_gateway_and_configured_image(
     tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     assert docker_database_host("localhost") == "host.docker.internal"
     assert docker_database_host("db.example.test") == "db.example.test"
@@ -346,7 +348,7 @@ def test_docker_helpers_use_host_gateway_and_configured_image(
                 CompletedProcess([], 0, "", ""),
             ],
         ) as run,
-        patch("dbtalk.postgres.client.click.echo") as echo,
+        caplog.at_level(logging.INFO),
     ):
         assert docker_postgres_image(image) == (image, "")
     assert run.call_args_list == [
@@ -356,8 +358,9 @@ def test_docker_helpers_use_host_gateway_and_configured_image(
         ),
         ((["docker", "pull", image],), {"check": False}),
     ]
-    echo.assert_called_once_with(f"Pulling configured PostgreSQL Docker image: {image}", err=True)
+    assert caplog.messages == [f"Pulling configured PostgreSQL Docker image: {image}"]
 
+    caplog.clear()
     with (
         patch("dbtalk.postgres.client.shutil.which", return_value="docker"),
         patch(
@@ -367,14 +370,14 @@ def test_docker_helpers_use_host_gateway_and_configured_image(
                 CompletedProcess([], 1, "", ""),
             ],
         ) as run,
-        patch("dbtalk.postgres.client.click.echo") as echo,
+        caplog.at_level(logging.INFO),
     ):
         assert docker_postgres_image(image) == (
             None,
             f"Configured PostgreSQL Docker image could not be pulled: {image}.",
         )
     assert run.call_args.args[0] == ["docker", "pull", image]
-    echo.assert_called_once_with(f"Pulling configured PostgreSQL Docker image: {image}", err=True)
+    assert caplog.messages == [f"Pulling configured PostgreSQL Docker image: {image}"]
 
     assert docker_host_gateway_args("db.example.test") == []
 

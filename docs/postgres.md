@@ -96,11 +96,14 @@ uv run dbtalk postgres schema list --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT
 uv run dbtalk postgres schema create --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT --name app_db
 uv run dbtalk postgres schema drop --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT --name app_db --yes
 uv run dbtalk postgres schema drop --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT --name app_db --if-exists --yes
+uv run dbtalk postgres schema drop --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT --name app_db --if-exists --force --yes
 ```
 
-`list` 输出非模板、可连接的数据库。`create` 使用服务端默认创建属性。`drop` 是不可逆操作，必须显式提供 `--yes`，且不能删除当前会话正在连接的数据库。存在其他连接、权限不足或服务器策略限制时，命令会失败；首版不会主动终止其他会话。
+`list` 输出非模板、可连接的数据库。`create` 使用服务端默认创建属性。`drop` 是不可逆操作，必须显式提供 `--yes`，且不能删除当前会话正在连接的数据库。默认不终止其他会话；存在其他连接、权限不足或服务器策略限制时，命令会失败。
 
 `drop --if-exists` 使用原生 `DROP DATABASE IF EXISTS`，目标库不存在时也成功，适合 `drop && create` 重置流程；不传该选项时，目标不存在仍会失败。该选项仍要求 `--yes`，仍拒绝删除当前连接库，连接、权限和其他会话占用等错误照常失败。
+
+`drop --force` 使用原生 `WITH (FORCE)`，尝试终止目标库的已有连接后删除，可与 `--if-exists` 组合。该选项会中断目标库的其他会话，仍要求 `--yes`，仍拒绝删除当前连接库。执行账号必须有相应的会话终止权限；预备事务、活跃逻辑复制槽、订阅或无法终止的连接仍可能阻止删除，dbtalk 会报告服务器错误，不逐会话重试或提升权限。参见 [PostgreSQL DROP DATABASE](https://www.postgresql.org/docs/18/sql-dropdatabase.html)。
 
 ## Dump
 

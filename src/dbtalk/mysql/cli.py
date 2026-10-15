@@ -66,7 +66,7 @@ mysql.add_command(revoke_command)
 mysql.add_command(permissions)
 
 
-@mysql.command("dump", context_settings=CONTEXT_SETTINGS)
+@mysql.command("dump", context_settings=CONTEXT_SETTINGS, log_lifecycle=False)
 @click.option("--dsn", "dsn_value", help="Complete MySQL SQLAlchemy-style DSN.")
 @click.option("--dsn-env", help="Environment variable containing the MySQL DSN.")
 @click.option(
@@ -133,7 +133,7 @@ def dump_command(  # noqa: PLR0913 - Click passes one argument for each CLI opti
     click.echo(f"MySQL dump written to {completed_output}")
 
 
-@mysql.command("restore", context_settings=CONTEXT_SETTINGS)
+@mysql.command("restore", context_settings=CONTEXT_SETTINGS, log_lifecycle=False)
 @click.option("--dsn", "dsn_value", help="Complete MySQL SQLAlchemy-style DSN.")
 @click.option("--dsn-env", help="Environment variable containing the MySQL DSN.")
 @click.option(

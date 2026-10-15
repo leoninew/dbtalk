@@ -716,7 +716,7 @@ def test_exec_file_runs_literal_script_in_one_transaction(tmp_path: Path) -> Non
         ["query", "--dsn", dsn, "--sql", "SELECT name FROM users WHERE id = 1", "--format", "json"],
     )
     assert query.exit_code == 0, query.output
-    assert json.loads(query.output)["rows"] == [{"name": '{"optional":true}'}]
+    assert json.loads(query.stdout)["rows"] == [{"name": '{"optional":true}'}]
 
 
 def test_exec_dry_run_prints_sql_without_executing(tmp_path: Path) -> None:
@@ -766,7 +766,7 @@ def test_exec_dry_run_prints_sql_without_executing(tmp_path: Path) -> None:
         ],
     )
     assert query.exit_code == 0, query.output
-    assert json.loads(query.output)["rows"] == [{"name": "Ada", "active": 1}]
+    assert json.loads(query.stdout)["rows"] == [{"name": "Ada", "active": 1}]
 
 
 def test_exec_file_rolls_back_when_a_later_statement_fails(tmp_path: Path) -> None:
@@ -788,7 +788,7 @@ def test_exec_file_rolls_back_when_a_later_statement_fails(tmp_path: Path) -> No
         ["query", "--dsn", dsn, "--sql", "SELECT name FROM users WHERE id = 1", "--format", "json"],
     )
     assert query.exit_code == 0, query.output
-    assert json.loads(query.output)["rows"] == [{"name": "Ada"}]
+    assert json.loads(query.stdout)["rows"] == [{"name": "Ada"}]
 
 
 def test_exec_requires_sql_or_file_exclusively(tmp_path: Path) -> None:
@@ -844,7 +844,7 @@ def test_cli_without_parameters_executes_sql_literally(tmp_path: Path) -> None:
         ],
     )
     assert query.exit_code == 0, query.output
-    assert json.loads(query.output)["rows"] == [{"payload": literal_json}]
+    assert json.loads(query.stdout)["rows"] == [{"payload": literal_json}]
 
     execution = runner.invoke(
         cli,
@@ -883,7 +883,7 @@ def test_query_and_exec_cli_use_dsn_environment(
         ],
     )
     assert query.exit_code == 0, query.output
-    assert json.loads(query.output)["rows"] == [{"name": "Ada"}]
+    assert json.loads(query.stdout)["rows"] == [{"name": "Ada"}]
 
     direct_query = runner.invoke(
         cli,

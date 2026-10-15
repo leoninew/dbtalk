@@ -203,7 +203,7 @@ def test_database_lifecycle_operations_quote_names(
 
 
 @pytest.mark.parametrize(
-    ("module", "dsn", "dialect", "current_database", "probe"),
+    ("module", "dsn", "dialect", "current_database", "probe", "force"),
     [
         (
             mysql_database,
@@ -211,6 +211,7 @@ def test_database_lifecycle_operations_quote_names(
             MysqlDialect(),
             "app",
             "SELECT DATABASE()",
+            False,
         ),
         (
             postgres_database,
@@ -218,6 +219,15 @@ def test_database_lifecycle_operations_quote_names(
             PostgreSQLDialect(),  # type: ignore[no-untyped-call]
             "app",
             "SELECT current_database()",
+            False,
+        ),
+        (
+            postgres_database,
+            "postgresql+psycopg://admin:secret@db.example/",
+            PostgreSQLDialect(),  # type: ignore[no-untyped-call]
+            "app",
+            "SELECT current_database()",
+            True,
         ),
     ],
 )
@@ -229,14 +239,18 @@ def test_drop_refuses_the_currently_connected_database(
     dialect: Any,
     current_database: str,
     probe: str,
+    force: bool,
     if_exists: bool,
 ) -> None:
     connection = FakeConnection(dialect, rows=[(current_database,)])
     engine = FakeEngine(connection)
     monkeypatch.setattr(module, "create_engine", lambda _: engine)
+    options = {"if_exists": if_exists}
+    if force:
+        options["force"] = True
 
     with pytest.raises(DatabaseOperationError, match="currently connected database"):
-        module.drop_database(parse_dsn(dsn), current_database, if_exists=if_exists)
+        module.drop_database(parse_dsn(dsn), current_database, **options)
 
     assert connection.statements == [probe]
     assert engine.disposed
@@ -282,26 +296,36 @@ def test_drop_allows_an_omitted_database_path_when_session_differs(
 
 
 @pytest.mark.parametrize(
-    ("group", "module", "parsed", "dialect", "probe"),
+    ("group", "module", "parsed", "dialect", "probe", "force"),
     [
-        ("mysql", mysql_database, parsed_mysql(), MysqlDialect(), "SELECT DATABASE()"),
+        ("mysql", mysql_database, parsed_mysql(), MysqlDialect(), "SELECT DATABASE()", False),
         (
             "postgres",
             postgres_database,
             parsed_postgresql(),
             PostgreSQLDialect(),  # type: ignore[no-untyped-call]
             "SELECT current_database()",
+            False,
+        ),
+        (
+            "postgres",
+            postgres_database,
+            parsed_postgresql(),
+            PostgreSQLDialect(),  # type: ignore[no-untyped-call]
+            "SELECT current_database()",
+            True,
         ),
     ],
 )
 @pytest.mark.parametrize("if_exists", [False, True])
-def test_drop_cli_uses_native_if_exists_and_quotes_the_target(
+def test_drop_cli_uses_native_options_and_quotes_the_target(
     monkeypatch: pytest.MonkeyPatch,
     group: str,
     module: Any,
     parsed: ParsedDsn,
     dialect: Any,
     probe: str,
+    force: bool,
     if_exists: bool,
 ) -> None:
     name = 'app "quoted" name'
@@ -321,13 +345,16 @@ def test_drop_cli_uses_native_if_exists_and_quotes_the_target(
     ]
     if if_exists:
         arguments.append("--if-exists")
+    if force:
+        arguments.append("--force")
 
     result = CliRunner().invoke(cli, arguments)
 
     assert result.exit_code == 0, result.output
     clause = " IF EXISTS" if if_exists else ""
+    suffix = " WITH (FORCE)" if force else ""
     quoted_name = dialect.identifier_preparer.quote(name)
-    assert connection.statements == [probe, f"DROP DATABASE{clause} {quoted_name}"]
+    assert connection.statements == [probe, f"DROP DATABASE{clause} {quoted_name}{suffix}"]
     assert connection.execution_options_value == {"isolation_level": "AUTOCOMMIT"}
     action = "dropped if it existed" if if_exists else "dropped"
     assert f"Database {action}: {name}" in result.output
@@ -335,21 +362,29 @@ def test_drop_cli_uses_native_if_exists_and_quotes_the_target(
 
 
 @pytest.mark.parametrize(
-    ("module", "parsed", "dialect"),
+    ("module", "parsed", "dialect", "force"),
     [
-        (mysql_database, parsed_mysql(), MysqlDialect()),
+        (mysql_database, parsed_mysql(), MysqlDialect(), False),
         (
             postgres_database,
             parsed_postgresql(),
             PostgreSQLDialect(),  # type: ignore[no-untyped-call]
+            False,
+        ),
+        (
+            postgres_database,
+            parsed_postgresql(),
+            PostgreSQLDialect(),  # type: ignore[no-untyped-call]
+            True,
         ),
     ],
 )
-def test_drop_if_exists_propagates_deletion_errors(
+def test_drop_options_propagate_deletion_errors(
     monkeypatch: pytest.MonkeyPatch,
     module: Any,
     parsed: ParsedDsn,
     dialect: Any,
+    force: bool,
 ) -> None:
     connection = FakeConnection(dialect)
     engine = FakeEngine(connection)
@@ -358,11 +393,15 @@ def test_drop_if_exists_propagates_deletion_errors(
     )
     monkeypatch.setattr(connection, "exec_driver_sql", execute)
     monkeypatch.setattr(module, "create_engine", lambda _: engine)
+    options = {"if_exists": True}
+    if force:
+        options["force"] = True
 
     with pytest.raises(DatabaseOperationError, match="permission denied"):
-        module.drop_database(parsed, "app", if_exists=True)
+        module.drop_database(parsed, "app", **options)
 
-    assert execute.call_args_list[-1].args == ("DROP DATABASE IF EXISTS app",)
+    suffix = " WITH (FORCE)" if force else ""
+    assert execute.call_args_list[-1].args == (f"DROP DATABASE IF EXISTS app{suffix}",)
     assert engine.disposed
 
 
@@ -457,7 +496,9 @@ def test_postgresql_create_and_drop_commands_report_actions(
     monkeypatch.setattr(postgres_database, "resolve_management_dsn", lambda *_: parsed)
     monkeypatch.setattr(postgres_database, "create_database", lambda _, name: created.append(name))
     monkeypatch.setattr(
-        postgres_database, "drop_database", lambda _, name, *, if_exists: dropped.append(name)
+        postgres_database,
+        "drop_database",
+        lambda _, name, *, if_exists, force: dropped.append(name),
     )
     runner = CliRunner()
 
@@ -487,10 +528,10 @@ def test_postgresql_create_and_drop_commands_report_actions(
     assert "Database dropped: app" in drop.output
 
 
-@pytest.mark.parametrize("group", ["mysql", "postgres"])
+@pytest.mark.parametrize("group,force", [("mysql", False), ("postgres", False), ("postgres", True)])
 @pytest.mark.parametrize("if_exists", [False, True])
 def test_drop_requires_yes_before_resolving_a_dsn(
-    monkeypatch: pytest.MonkeyPatch, group: str, if_exists: bool
+    monkeypatch: pytest.MonkeyPatch, group: str, force: bool, if_exists: bool
 ) -> None:
     resolve_dsn = Mock()
     module = mysql_database if group == "mysql" else postgres_database
@@ -498,6 +539,8 @@ def test_drop_requires_yes_before_resolving_a_dsn(
     arguments = [group, "schema", "drop", "--dsn-env", "DBTALK_DSN_MANAGEMENT", "--name", "app"]
     if if_exists:
         arguments.append("--if-exists")
+    if force:
+        arguments.append("--force")
 
     result = CliRunner().invoke(cli, arguments)
 

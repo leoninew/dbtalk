@@ -39,11 +39,14 @@ dbtalk postgres schema list --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT
 dbtalk postgres schema create --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT --name app_db
 dbtalk postgres schema drop --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT --name app_db --yes
 dbtalk postgres schema drop --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT --name app_db --if-exists --yes
+dbtalk postgres schema drop --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT --name app_db --if-exists --force --yes
 ```
 
-先执行 `list` 核对目标。删除不可逆，只有用户明确授权删除指定目标时才传入 `--yes`；不能删除当前会话正在连接的数据库。存在其他连接时应如实报告失败，不主动终止其他会话；不猜测目标、不执行任意 SQL、不创建或管理 role。
+先执行 `list` 核对目标。删除不可逆，只有用户明确授权删除指定目标时才传入 `--yes`；不能删除当前会话正在连接的数据库。默认不终止其他会话，连接占用时如实报告失败；不猜测目标、不执行任意 SQL、不创建或管理 role。
 
 `schema drop --if-exists` 使用原生 `DROP DATABASE IF EXISTS`，仅忽略目标库不存在；默认不忽略。该选项仍要求删除授权和 `--yes`，仍拒绝删除当前连接库，连接、权限和其他会话占用等错误照常失败。
+
+`schema drop --force` 使用原生 `WITH (FORCE)` 尝试终止目标库已有连接后删除，可与 `--if-exists` 组合。只有用户授权删除目标并处理中断其占用连接时才使用，仍要求 `--yes`，仍拒绝删除当前连接库。会话终止权限不足、预备事务、活跃逻辑复制槽或订阅仍可能导致失败；如实报告，不自动提权、逐会话终止或重试。该选项仅属于 PostgreSQL `schema drop`。
 
 ## Dump
 

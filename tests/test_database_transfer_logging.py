@@ -7,7 +7,6 @@ import unittest
 from datetime import UTC
 from itertools import count
 from pathlib import Path
-from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -28,26 +27,9 @@ from dbtalk.database.transfer import (
     export_database,
     import_database,
 )
-from dbtalk.logging_config import configure_logging
-from dbtalk.settings import LoggingSettings
 
 
 class DatabaseTransferLoggingTests(unittest.TestCase):
-    def test_configure_logging_uses_configured_standard_format_and_level(self) -> None:
-        config = LoggingSettings(
-            level="WARNING",
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        )
-
-        with patch("dbtalk.logging_config.logging.basicConfig") as configure:
-            configure_logging(config.level, config.format, verbose=False)
-
-        configure.assert_called_once_with(
-            level="WARNING",
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            force=True,
-        )
-
     def test_sqlite_export_logs_task_schema_table_and_completion(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

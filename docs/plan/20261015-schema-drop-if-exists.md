@@ -1,5 +1,5 @@
-# Plan / 计划：数据库删除支持 --if-exists
-最后修改时间: 2026-10-15 09:02:50
+# Plan / 计划：数据库删除支持 --if-exists 与 PostgreSQL --force
+最后修改时间: 2026-10-15 09:09:11
 
 ## Review status / 审查状态
 
@@ -7,16 +7,18 @@ Accepted
 
 ## Intent basis / 意图依据
 
-依据 [Intent](../intent/20261015-schema-drop-if-exists.md) 的 A01–A04。用户本轮直接要求添加功能，补齐前置记录后进入 Implementation；必要开发检查属于实施交付，整体 Verification 按 SpecFlow 后续阶段授权推进。
+依据 [Intent](../intent/20261015-schema-drop-if-exists.md) 的 A01–A05。依据前一轮添加功能及本轮处理 PostgreSQL 实际连接占用问题的请求，继续 Implementation；必要开发检查属于实施交付，整体 Verification 按 SpecFlow 后续阶段授权推进。
 
 ## Technical decisions / 技术设计与决策
 
 - 两个 `drop` Click 入口增加布尔选项 `--if-exists`，默认关闭，始终要求 `--yes`。
 - 两个 `drop_database()` 增加 keyword-only 参数 `if_exists: bool = False`，传入私有 `_drop_database()`；保持各方言既有管理连接和 AUTOCOMMIT。
+- PostgreSQL CLI 及操作函数另加默认关闭的 `force` 布尔选项；显式 `--force` 在 DROP 末尾追加 `WITH (FORCE)`，可与 `IF EXISTS` 组合。继续在 DROP 前检查当前连接库，不先手动终止会话，也不自动回退或重试。
 - 先按原有逻辑探测当前连接数据库并拒绝同名目标，再根据选项生成 `DROP DATABASE [IF EXISTS] <quoted name>`；由服务器处理缺失目标，不查询存在性，不吞异常。
 - 默认成功输出保持原样；显式启用时输出 `Database dropped if it existed: <name>`，不宣称缺失目标实际被删除。
 - 扩展已有参数化测试覆盖两个方言和选项两种取值，并核对确认要求、当前连接库保护、名称引用与删除阶段异常传播。
 - 手册和仓库内两个 Agent skill 说明该选项仅忽略目标库不存在；本地脚本两个 drop 增加选项，以修改前后全部 export 行及项目配置块完全一致为检查条件。
+- PostgreSQL 手册和 Agent skill 说明 force 会尝试终止目标连接以及原生权限、预备事务、复制资源等限制；本地 PostgreSQL drop 显式增加 `--force` 并说明作用，保留全部现有配置。原生语义依据 [PostgreSQL 18 DROP DATABASE](https://www.postgresql.org/docs/18/sql-dropdatabase.html)。
 
 ## Implementation steps / 实现步骤
 
@@ -48,7 +50,7 @@ Accepted
 
 ## Risks / blockers / assumptions / 风险 / 阻塞项 / 假设
 
-无已知阻塞。`--if-exists` 不会使连接失败、权限不足或数据库占用变成成功；本地脚本仍通过 `&&` 停止这些错误后的建库。整体 Verification 尚未进入。
+无已知阻塞。`--if-exists` 不处理占用；只有显式 `--force` 才请求 PostgreSQL 终止目标库的现有连接。原生 FORCE 不能保证权限不足、预备事务、活跃逻辑复制槽或订阅等情况下成功；失败时本地脚本仍通过 `&&` 停止后续建库。整体 Verification 尚未进入。
 
 ## Rollback / recovery / 回滚 / 恢复
 
@@ -57,8 +59,11 @@ Accepted
 ## User review notes / 用户审查记录
 
 - 2026-10-15：依据用户添加功能的明确请求，补齐计划后实施；不将方案 Accepted 记为实现交付或整体验收已接受。
+- 2026-10-15：依据用户实际占用报错追加 PostgreSQL `--force`；保留当前已暂存的前一轮变更，仅在工作树追加实现，不修改暂存状态。
 
 ## Implementation results / 实施结果
+
+以下记录前一轮 `--if-exists` 已完成结果；本轮 force 追加结果在后续章节单独记录。
 
 ### Changes / 实际变更
 
@@ -90,3 +95,24 @@ Accepted
 - 本地文档在实施期间由外部更新，首次保护检查发现配置块数量与旧记录不同，因此未写入；随后读取最新版本，仅添加两个选项并保留当时全部配置，不恢复已由外部移除的配置。
 - 产品范围无偏差；未执行真实数据库实验，模拟连接证明 SQL 生成与错误传播，缺失库语义由原生 `IF EXISTS` 提供。
 - Implementation 及必要开发检查已完成；尚未进入整体 Verification，未创建整体报告，不将本记录视为用户已接受实现交付。
+
+## Force follow-up / PostgreSQL 连接占用追加实施
+
+- PostgreSQL 的 CLI、操作函数与原生 SQL 已支持默认关闭的 `force`；启用时追加 `WITH (FORCE)`，与 `IF EXISTS` 可独立或组合使用。当前连接库检查仍在 DROP 之前，不额外查询或终止会话，不吞掉原生失败。
+- 扩展已有测试参数，覆盖 PostgreSQL 两个选项的四种组合、强制选项下的 `--yes` 与当前连接库保护、标识符引用、AUTOCOMMIT 和服务器删除错误传播。MySQL 未增加 force。
+- 更新 PostgreSQL 手册、仓库内 Agent skill 和本功能意图、计划；本轮工作树追加范围为 6 个仓库文件，用户此前已暂存的变更保留。
+- 本地重置文档仅给 PostgreSQL drop 增加 `--force` 及作用说明；最新 11 行 export、4 组项目配置块前后完全一致，写入前检查并发变化，写入后复读一致。
+
+| 追加实施的实际命令 | 结果 |
+| --- | --- |
+| `uv run --locked --no-sync python -m pytest tests/test_database_administration.py` | 42 passed。 |
+| `uv run --locked --no-sync python -m pytest` | 393 passed，10 skipped；外部环境跳过范围同前一轮。 |
+| `uv run --locked --no-sync python -m ruff format --check src tests scripts` | 最终 66 files already formatted。 |
+| `uv run --locked --no-sync python -m ruff check src tests scripts` | 最终 All checks passed。 |
+| `uv run --locked --no-sync python -m mypy src tests scripts` | 67 source files，无问题。 |
+| `dbtalk postgres schema drop --help` | PATH 中的 CLI 已展示 `--force` 及其终止连接作用。 |
+| `git diff --check`、`git diff --cached --check`、实际 diff 审查 | 均通过；未操作 Git 暂存或提交。 |
+
+首次 Ruff 检查发现测试 mock 调用一行超过长度限制，按已有格式换行后复查通过；该修正仅影响排版，无需重复已通过的全量行为测试。
+
+本轮依据用户反馈明确扩展原计划，为可选强制删除增加原生能力；未实际连接、终止会话或删除 `casdoor` 及其他业务库，未执行真实数据库实验。FORCE 在服务器权限或复制资源等阻塞下仍可能失败，不承诺强制成功；整体 Verification 尚未进入。
