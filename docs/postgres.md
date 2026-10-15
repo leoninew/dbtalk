@@ -25,7 +25,7 @@ uv run dbtalk postgres permissions --help
 
 ## DSN 与客户端
 
-所有命令必须且只能提供一个 `--dsn DSN` 或 `--dsn-env NAME`。PostgreSQL DSN 必须使用明确的 `postgresql+psycopg://` 格式。`--dsn` 保留给直接集成；Agent 将 DSN 写入当前目录 `.env` 的 `DBTALK_DSN_*`，并只使用 `--dsn-env`：
+PostgreSQL DSN 格式为 `postgresql+psycopg://`，通过 `--dsn DSN` 或 `--dsn-env NAME` 二选一传入。Agent 只用 `--dsn-env` 复用已有变量；示例变量名需替换为实际名称。连接选择和新增规则见 [Agent 操作边界](codex.md#操作边界)。
 
 ```dotenv
 DBTALK_DSN_APP=postgresql+psycopg://backup:password@db.example.com:5432/app?sslmode=require
@@ -86,7 +86,7 @@ uv run dbtalk postgres owner transfer \
 
 ## Schema management
 
-`schema` 子命令管理 PostgreSQL schema/database，不执行任意 SQL、不管理 role，也不替代 dump/restore。`list`、`create` 与 `drop` 的管理 DSN 都可以省略 database path。`drop` 以 `--name` 为删除目标，连接后读取当前会话数据库；若与 `--name` 相同则拒绝。账号还需要相应的建库或删库权限。
+`schema` 管理数据库；DSN 可省略 database path，账号需有建库或删库权限。`drop` 以 `--name` 为删除目标，拒绝删除当前连接库。
 
 ```dotenv
 DBTALK_DSN_POSTGRES_MANAGEMENT=postgresql+psycopg://operator:password@db.example.com:5432/postgres

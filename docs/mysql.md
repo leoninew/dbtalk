@@ -23,9 +23,7 @@ uv run dbtalk mysql permissions --help
 
 ## DSN
 
-MySQL 命令只接受明确的 `mysql+pymysql://` DSN：
-
-按用途将 DSN 写入当前目录 `.env`：
+MySQL DSN 格式为 `mysql+pymysql://`。Agent 通过 `--dsn-env` 复用已有变量；示例变量名需替换为实际名称。连接选择和新增规则见 [Agent 操作边界](codex.md#操作边界)。
 
 ```dotenv
 DBTALK_DSN_APP=mysql+pymysql://user:password@host:3306/app
@@ -41,11 +39,11 @@ uv run dbtalk mysql restore \
   --input ./data/app.sql.gz
 ```
 
-`mysql://`、`postgresql://`、`postgres://`、Go 风格 DSN 和 host/user/password/database 分散参数都不是 canonical DSN。MySQL URL 的 database path 可省略；dump/restore 的目标随后按 `--database > DSN database > 失败` 决定。完整 DSN 可能包含密码；Agent 将它写入当前目录 `.env` 后只传 `--dsn-env`。密码只通过 `MYSQL_PWD` 传递给原生客户端，正常输出不会回显密码。
+DSN 的 database path 可省略；dump/restore 按 `--database > DSN database > 失败` 确定目标库。密码通过 `MYSQL_PWD` 传给原生客户端，不在输出中回显。
 
 ## Schema management
 
-`schema` 子命令管理 MySQL schema/database 本身，不执行任意 SQL、不管理账号，也不替代 dump/restore。DSN 可省略 database path；所用账号需要相应的 MySQL 数据库管理权限。
+`schema` 管理数据库；DSN 可省略 database path，账号需有相应权限。
 
 ```dotenv
 DBTALK_DSN_MYSQL_MANAGEMENT=mysql+pymysql://operator:password@db.example.com:3306/mysql

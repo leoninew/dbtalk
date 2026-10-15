@@ -44,7 +44,7 @@ uv run dbtalk --help
 
 ## 快速开始
 
-将连接信息保存到当前目录 `.env`，命令中只引用变量名：
+复用进程环境或当前目录 `.env` 中已有的 `DBTALK_DSN_*`，将示例变量名替换为实际名称；无适用连接时再配置。
 
 ```dotenv
 DBTALK_DSN_APP=sqlite:///./data/app.db
@@ -70,8 +70,6 @@ uv run dbtalk exec \
 ```
 
 `query` 使用只读会话，`exec` 使用写会话。使用 `dbtalk -v <命令>` 或 `dbtalk --verbose <命令>` 可开启 stderr 操作日志和清洗后的异常细节；默认不输出 logging 日志。
-
-Agent 在第一条数据库命令前将 DSN 写入 `.env`。`--dsn-env DBTALK_DSN_*` 优先读取进程环境变量，只有变量不存在时才从当前目录 `.env` 回退读取。
 
 ## 命令
 

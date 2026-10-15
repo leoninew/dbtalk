@@ -16,19 +16,21 @@ uv sync --all-groups
 | [`dbtalk-mysql`](../plugins/dbtalk/skills/dbtalk-mysql/SKILL.md) | MySQL schema、user、权限、backup、dump、restore 或导入 `.sql`。 | `dbtalk mysql` | [MySQL 手册](mysql.md) |
 | [`dbtalk-postgres`](../plugins/dbtalk/skills/dbtalk-postgres/SKILL.md) | PostgreSQL schema、role、权限、单库逻辑备份或恢复 custom archive。 | `dbtalk postgres` | [PostgreSQL 手册](postgres.md) |
 
-三个 skill 只在其职责范围内选择命令：原生 MySQL SQL 备份与还原使用 `dbtalk-mysql`；PostgreSQL custom archive 使用 `dbtalk-postgres`；通用 SQL 操作和跨库数据传输使用 `dbtalk`。它们不会替代 CLI 的参数校验或配置加载。
-
 ## 操作边界
 
-skills 会先通过相应的 `--help` 确认可用参数。CLI 保留 `--dsn DSN` 与 `--dsn-env NAME` 的二选一契约，但代理执行只能使用 `--dsn-env`：拿到 DSN 后、第一条 dbtalk 命令前，按范围将 DSN 写入当前目录 `.env`，单应用库为 `DBTALK_DSN_APP`，传输为 `DBTALK_DSN_SOURCE` 与 `DBTALK_DSN_TARGET`，数据库生命周期为方言对应的 `DBTALK_DSN_<DIALECT>_MANAGEMENT`，账号或 role 管理为 `DBTALK_DSN_<DIALECT>_ADMIN`。同一任务复用这些名称，不能传 `--dsn`、`export` DSN、内联 DSN 环境变量或 PowerShell `$env:` DSN。`--dsn-env DBTALK_DSN_*` 先读取同名进程环境变量；只有变量不存在时，才读取当前工作目录 `.env` 的同名值。进程变量存在但为空会失败而不回退，其他名称不会读取 dotenv。CLI 不加载 `.env.local`、其他 dotenv 变体或父目录 dotenv 文件；常规配置只来自 `dbtalk.yaml` 和 `DBTALK_*` 进程环境变量。凭据不能出现在命令行、日志、JSONL 制品或 `.env.example` 中。
+Agent 先通过 `--help` 确认参数，连接只使用 `--dsn-env NAME`：
 
-`dbtalk-mysql` 的 dump/restore 使用本机客户端，或回退到本机已有 Docker `mysql` 镜像；数据库管理命令不调用这些客户端。`dbtalk` 仅传输既有 schema 的数据；导入前必须明确目标库、制品来源和写入授权。
+1. 优先使用用户指定的变量；否则从进程环境或当前目录 `.env` 中，按引擎、服务器、目标库和账号权限选择已有 `DBTALK_DSN_*`。
+2. DSN 和密码变量均保留原名，将示例名替换为实际名称，不复制连接或创建别名。传输时分别核对源端和目标端；目标库使用命令支持的 `--database` 指定。
+3. 无适用连接时，用用户提供或授权配置的连接信息向当前目录 `.env` 新增 `DBTALK_DSN_*` 条目，保留已有内容。目标或凭据不明时询问用户。
 
-`dbtalk-postgres` 对本机 DSN 的唯一端口映射容器优先复用其 `docker exec` 和默认 Unix socket；未识别到唯一映射容器时使用本机 `pg_dump` / `pg_restore`，缺失时只使用配置的本地 PostgreSQL Docker image（默认 `postgres:18`）；不会拉取 image。它只处理 custom archive，不等同于 PostgreSQL 的物理备份或 JSONL 数据传输。`dbtalk-postgres schema` 独立处理 PostgreSQL database 生命周期，不调用 `pg_dump` / `pg_restore`。
+同名进程变量优先；仅在变量不存在时，`DBTALK_DSN_*` 才从当前目录 `.env` 读取。空值报错，不搜索其他 dotenv 文件。配置来自 `dbtalk.yaml` 和 `DBTALK_*` 进程变量。用户要求在脚本中声明变量时，使用进程变量，不写入 dotenv。
+
+不输出真实 DSN 或密码，也不将其写入命令参数、日志、文档、制品或 `.env.example`。
+
+`dbtalk import` 要求目标 schema 已存在；执行前核对目标库、制品来源和写入授权。
 
 两个方言的 user/role、grant/revoke 命令均使用管理 DSN 和结构化参数，不接收原始 SQL。密码仅可通过 `--password-env` 引用；`DBTALK_*` 名称在进程变量不存在时读取当前目录 `.env`。MySQL `password`、`user drop`、`grant` 和 `revoke` 使用 `--host` 或 `--all-hosts` 二者之一。启用、禁用、轮换、删除、授权和撤销需要 `--yes`，且不能修改当前管理身份。
-
-命令行为、配置字段和参数以 [CLI 手册](../README.md#commands) 与运行时 `--help` 为准；skill 文件用于让 Codex 在合适的任务中选择并安全地运行这些命令。
 
 ## 本地安装与发布
 

@@ -17,9 +17,15 @@ dbtalk postgres schema --help
 
 ## Agent connection workflow
 
-连接使用 canonical `postgresql+psycopg://user:password@host:5432/database`；database path 可省略。CLI 兼容 `--dsn DSN` 与 `--dsn-env NAME` 二选一，但**代理执行时只可使用 `--dsn-env`，绝不传 `--dsn`**。按操作范围复用 `DBTALK_DSN_APP`（dump 或 restore）、`DBTALK_DSN_POSTGRES_MANAGEMENT`（schema）或 `DBTALK_DSN_POSTGRES_ADMIN`（role、grant、revoke、permissions、session）。可引用已有当前目录 `.env`；用户要求在命令文件中直接声明变量时，使用进程环境变量，不新建 dotenv、不覆盖已有密码。
+Agent 只使用 `--dsn-env NAME`。连接格式为 `postgresql+psycopg://user:password@host:5432/database`，database path 可省略。
 
-对于 `--dsn-env DBTALK_DSN_*`，dbtalk 优先使用同名进程环境变量；变量不存在时才读取当前工作目录 `.env` 的同名值。进程变量存在但为空会失败而不回退；非 `DBTALK_DSN_*` 名称不读取 dotenv，且 CLI 不加载 `.env.local`、其他 dotenv 变体或父目录 dotenv 文件。不得猜测凭据，也不得将实际 DSN 写入 `.env.example`、命令行、日志、skill 或 archive 文件名：
+1. 优先使用用户指定的变量；否则从进程环境或当前目录 `.env` 中，按服务器、目标库和账号权限选择已有 PostgreSQL 连接。
+2. DSN 和密码变量均保留原名，将示例名替换为实际名称，不复制连接或创建别名。目标库使用命令支持的 `--database` 指定。
+3. 无适用连接时，用用户提供或授权配置的连接信息向当前目录 `.env` 新增 `DBTALK_DSN_*` 条目，保留已有内容。目标或凭据不明时询问用户。
+
+同名进程变量优先；仅在变量不存在时，`DBTALK_DSN_*` 才从当前目录 `.env` 读取。空值报错，不搜索其他 dotenv 文件。用户要求在脚本中声明变量时，使用进程变量，不写入 dotenv。
+
+不输出真实 DSN 或密码，也不将其写入命令参数、日志、文档、制品名或 `.env.example`。配置示例：
 
 ```dotenv
 DBTALK_DSN_APP=postgresql+psycopg://backup:password@db.example.com:5432/app
@@ -32,7 +38,7 @@ DBTALK_POSTGRES_APP_PASSWORD=change-me
 
 ## Database management
 
-数据库生命周期操作使用 `dbtalk postgres schema`，与 query/exec、role 管理和 dump/restore 分离。管理 DSN 可省略 database path，并使用具有建库或删库权限的账号。`schema drop` 以 `--name` 为删除目标，连接后检查当前会话数据库。
+`dbtalk postgres schema` 管理数据库，账号需有建库或删库权限。DSN 可省略 database path；`schema drop` 拒绝删除当前连接库。
 
 ```bash
 dbtalk postgres schema list --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT
@@ -52,7 +58,7 @@ dbtalk postgres schema drop --dsn-env DBTALK_DSN_POSTGRES_MANAGEMENT --name app_
 
 先用 `session list` 核对目标。两条命令均按 `--database > DSN database > 失败` 解析；显式参数同时覆盖连接数据库，账号必须能连接目标库。即使指定 `--id`，也必须具有目标数据库。列表只含目标库的普通客户端，排除自身及系统进程，空结果为 `(0 rows)`。
 
-以下 Bash 示例在文件内声明变量，不创建 `.env`；只使用用户提供的连接值：
+按用户要求在脚本中声明连接的示例；已有变量时省略 DSN 声明：
 
 ```bash
 export DBTALK_DSN_POSTGRES_ADMIN='postgresql+psycopg://operator:password@127.0.0.1:5432/postgres'
@@ -94,7 +100,7 @@ restore 在写入前用 `pg_restore --list` 校验 archive。即使启用 fail-f
 
 ## Owner 转移
 
-`dbtalk postgres owner reassign` 使用原生 `REASSIGN OWNED` 转移指定 role 的所有对象；默认预览，显式 `--yes` 才执行。操作必须给出 `--database`、`--from-role`、`--to-role`，并使用 `.env` 的 `DBTALK_DSN_POSTGRES_ADMIN`；执行前核对预览中的当前数据库对象和 cluster 共享对象（数据库、表空间等）。它**不是**单个 schema 或表的权限授予；grant migrator 也不会改变 owner。不得在仅授权某些表或某个 schema 时使用。目标 role 必须与源 role 不同。变更前必须确认目标数据库、两个 role、可能受影响的共享对象和写入授权。预览中出现共享对象时，加 `--yes` 也不会直接执行；只有明确接受跨库共享对象变更并追加 `--include-shared` 才能执行。
+`dbtalk postgres owner reassign` 使用原生 `REASSIGN OWNED` 转移指定 role 的所有对象；默认预览，显式 `--yes` 才执行。操作必须给出 `--database`、`--from-role`、`--to-role`，并复用具有相应权限的现有管理连接；执行前核对预览中的当前数据库对象和 cluster 共享对象（数据库、表空间等）。它**不是**单个 schema 或表的权限授予；grant migrator 也不会改变 owner。不得在仅授权某些表或某个 schema 时使用。目标 role 必须与源 role 不同。变更前必须确认目标数据库、两个 role、可能受影响的共享对象和写入授权。预览中出现共享对象时，加 `--yes` 也不会直接执行；只有明确接受跨库共享对象变更并追加 `--include-shared` 才能执行。
 
 ```bash
 dbtalk postgres owner reassign --dsn-env DBTALK_DSN_POSTGRES_ADMIN \

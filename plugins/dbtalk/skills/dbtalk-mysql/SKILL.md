@@ -17,11 +17,15 @@ DSN 的 host 从当前执行机解释。`localhost` 或 `127.0.0.1` 指向当前
 
 ## Agent connection workflow
 
-从项目根目录的 `dbtalk.yaml` 读取默认配置，并可由 `DBTALK_*` 进程环境变量覆盖；CLI 不加载 `.env.local`、其他 dotenv 变体或父目录 dotenv 文件。CLI 兼容 canonical `--dsn DSN` 与 `--dsn-env NAME` 二选一，但**代理执行时只可使用 `--dsn-env`，绝不传 `--dsn`**，也不使用 host、port、user、password、database 分散参数。
+配置来自 `dbtalk.yaml`，可由 `DBTALK_*` 进程变量覆盖。Agent 只使用 `--dsn-env NAME`，连接格式为 `mysql+pymysql://`。
 
-按权限范围复用 `DBTALK_DSN_APP`（应用、dump 或 restore）、`DBTALK_DSN_MYSQL_MANAGEMENT`（schema）或 `DBTALK_DSN_MYSQL_ADMIN`（user、grant、revoke、permissions、session）。可引用已有当前目录 `.env`；用户要求在命令文件中直接声明变量时，使用进程环境变量，不新建 dotenv、不覆盖已有密码。
+1. 优先使用用户指定的变量；否则从进程环境或当前目录 `.env` 中，按服务器、目标库和账号权限选择已有 MySQL 连接。
+2. DSN 和密码变量均保留原名，将示例名替换为实际名称，不复制连接或创建别名。目标库使用命令支持的 `--database` 指定。
+3. 无适用连接时，用用户提供或授权配置的连接信息向当前目录 `.env` 新增 `DBTALK_DSN_*` 条目，保留已有内容。目标或凭据不明时询问用户。
 
-`--dsn-env DBTALK_DSN_*` 优先读取同名进程环境变量；变量不存在时才读取当前目录 `.env`。进程变量存在但为空会失败而不回退；非 `DBTALK_DSN_*` 名称不读取 dotenv。不得猜测凭据，也不得将实际 DSN 写入 `.env.example`、命令行、日志或文档：
+同名进程变量优先；仅在变量不存在时，`DBTALK_DSN_*` 才从当前目录 `.env` 读取。空值报错，不搜索其他 dotenv 文件。用户要求在脚本中声明变量时，使用进程变量，不写入 dotenv。
+
+不输出真实 DSN 或密码，也不将其写入命令参数、日志、文档或 `.env.example`。配置示例：
 
 ```dotenv
 DBTALK_DSN_APP=mysql+pymysql://user:password@host:3306/database
@@ -32,7 +36,7 @@ DBTALK_MYSQL_ROOT_PASSWORD=change-me
 
 ## Database management
 
-数据库生命周期操作使用 `dbtalk mysql schema`，与 query/exec、账号管理和 dump/restore 分离。管理 DSN 可省略 database path，并使用具有相应数据库管理权限的账号。`schema drop` 以 `--name` 为删除目标，连接后检查当前会话数据库。
+`dbtalk mysql schema` 管理数据库，账号需有相应权限。DSN 可省略 database path；`schema drop` 拒绝删除当前连接库。
 
 ```bash
 dbtalk mysql schema list --dsn-env DBTALK_DSN_MYSQL_MANAGEMENT
@@ -49,7 +53,7 @@ dbtalk mysql schema drop --dsn-env DBTALK_DSN_MYSQL_MANAGEMENT --name app_db --i
 
 先用 `session list` 核对目标。两条命令均按 `--database > DSN database > 失败` 解析；显式参数同时覆盖连接数据库，账号必须能访问目标库。即使指定 `--id`，也必须具有目标数据库。
 
-以下 Bash 示例在文件内声明变量，不创建 `.env`；只使用用户提供的连接值：
+按用户要求在脚本中声明连接的示例；已有变量时省略 DSN 声明：
 
 ```bash
 export DBTALK_DSN_MYSQL_ADMIN='mysql+pymysql://operator:password@127.0.0.1:3306/mysql'

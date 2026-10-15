@@ -44,7 +44,7 @@ uv run dbtalk --help
 
 ## Quick start
 
-Keep the connection string in the current directory's `.env`, then refer to it only by name:
+Reuse an existing `DBTALK_DSN_*` variable from the process environment or current `.env`. Replace the example name below; add a connection only if needed.
 
 ```dotenv
 DBTALK_DSN_APP=sqlite:///./data/app.db
@@ -70,8 +70,6 @@ uv run dbtalk exec \
 ```
 
 `query` is read-only; `exec` runs a write-capable session. Use `dbtalk -v <command>` or `dbtalk --verbose <command>` to enable operation logs on stderr and sanitized exception details. Logging is silent by default.
-
-Agents write the DSN to `.env` before the first database command. `--dsn-env DBTALK_DSN_*` reads the process environment first and only falls back to the current `.env` when that variable is absent.
 
 ## Commands
 
