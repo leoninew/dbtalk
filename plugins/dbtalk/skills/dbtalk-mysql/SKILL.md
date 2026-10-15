@@ -38,9 +38,12 @@ DBTALK_MYSQL_ROOT_PASSWORD=change-me
 dbtalk mysql schema list --dsn-env DBTALK_DSN_MYSQL_MANAGEMENT
 dbtalk mysql schema create --dsn-env DBTALK_DSN_MYSQL_MANAGEMENT --name app_db
 dbtalk mysql schema drop --dsn-env DBTALK_DSN_MYSQL_MANAGEMENT --name app_db --yes
+dbtalk mysql schema drop --dsn-env DBTALK_DSN_MYSQL_MANAGEMENT --name app_db --if-exists --yes
 ```
 
 先执行 `list` 核对目标。创建后只报告数据库名。删除不可逆，只有用户明确授权删除指定目标时才传入 `--yes`；不能删除当前会话正在连接的数据库。不猜测目标、不执行任意 SQL、不创建或管理账号。
+
+`schema drop --if-exists` 使用原生 `DROP DATABASE IF EXISTS`，仅忽略目标库不存在；默认不忽略。该选项仍要求删除授权和 `--yes`，仍拒绝删除当前连接库，连接、权限等其他错误照常失败。
 
 ## Dump
 

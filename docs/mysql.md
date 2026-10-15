@@ -54,9 +54,12 @@ DBTALK_DSN_MYSQL_MANAGEMENT=mysql+pymysql://operator:password@db.example.com:330
 uv run dbtalk mysql schema list --dsn-env DBTALK_DSN_MYSQL_MANAGEMENT
 uv run dbtalk mysql schema create --dsn-env DBTALK_DSN_MYSQL_MANAGEMENT --name app_db
 uv run dbtalk mysql schema drop --dsn-env DBTALK_DSN_MYSQL_MANAGEMENT --name app_db --yes
+uv run dbtalk mysql schema drop --dsn-env DBTALK_DSN_MYSQL_MANAGEMENT --name app_db --if-exists --yes
 ```
 
 `list` 输出可见数据库名。`create` 使用服务端默认创建属性。`drop` 是不可逆操作，必须显式提供 `--yes`，以 `--name` 为删除目标，连接后读取当前会话数据库；若与 `--name` 相同则拒绝。失败时命令只报告动作失败，不会输出 DSN 密码。MySQL 的名称、权限和 DDL 行为由服务器决定，执行前确认目标名称和连接账号。
+
+`drop --if-exists` 使用原生 `DROP DATABASE IF EXISTS`，目标库不存在时也成功，适合 `drop && create` 重置流程；不传该选项时，目标不存在仍会失败。该选项仍要求 `--yes`，仍拒绝删除当前连接库，连接或权限等其他错误照常失败。
 
 ## Dump
 

@@ -55,17 +55,21 @@ def create_command(dsn_value: str | None, dsn_env: str | None, name: str) -> Non
 @click.option("--dsn", "dsn_value", help="Complete MySQL SQLAlchemy-style DSN.")
 @click.option("--dsn-env", help="Environment variable containing the MySQL DSN.")
 @click.option("--name", required=True, help="Database name.")
+@click.option("--if-exists", is_flag=True, help="Succeed if the database does not exist.")
 @click.option("--yes", is_flag=True, help="Confirm database deletion.")
-def drop_command(dsn_value: str | None, dsn_env: str | None, name: str, yes: bool) -> None:
+def drop_command(
+    dsn_value: str | None, dsn_env: str | None, name: str, if_exists: bool, yes: bool
+) -> None:
     """Delete one MySQL database."""
 
     if not yes:
         raise click.UsageError("--yes is required to drop a database")
     try:
-        drop_database(resolve_management_dsn(dsn_value, dsn_env), name)
+        drop_database(resolve_management_dsn(dsn_value, dsn_env), name, if_exists=if_exists)
     except DatabaseOperationError as error:
         raise click.ClickException(str(error)) from error
-    click.echo(f"Database dropped: {name}")
+    action = "dropped if it existed" if if_exists else "dropped"
+    click.echo(f"Database {action}: {name}")
 
 
 def resolve_management_dsn(dsn: str | None, environment_name: str | None) -> ParsedDsn:
@@ -115,21 +119,24 @@ def create_database(parsed: ParsedDsn, name: str) -> None:
     )
 
 
-def drop_database(parsed: ParsedDsn, name: str) -> None:
+def drop_database(parsed: ParsedDsn, name: str, *, if_exists: bool = False) -> None:
     """Drop one MySQL database after explicit CLI confirmation."""
 
     _validate_management_dsn(parsed)
     _validate_database_name(name)
-    _run_management_operation(parsed, lambda connection: _drop_database(connection, name))
+    _run_management_operation(
+        parsed, lambda connection: _drop_database(connection, name, if_exists=if_exists)
+    )
 
 
-def _drop_database(connection: Connection, name: str) -> None:
+def _drop_database(connection: Connection, name: str, *, if_exists: bool) -> None:
     current = _connected_database_name(connection)
     if current is not None and current == name:
         raise DatabaseOperationError(
             "MySQL database deletion cannot target the currently connected database"
         )
-    connection.exec_driver_sql(f"DROP DATABASE {_quote_database_name(connection, name)}")
+    clause = " IF EXISTS" if if_exists else ""
+    connection.exec_driver_sql(f"DROP DATABASE{clause} {_quote_database_name(connection, name)}")
 
 
 def _connected_database_name(connection: Connection) -> str | None:
