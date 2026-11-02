@@ -4,14 +4,14 @@
 [![PyPI](https://img.shields.io/pypi/v/pomelo-dbtalk)](https://pypi.org/project/pomelo-dbtalk/)
 [![GitHub Release](https://img.shields.io/github/v/release/leoninew/pomelo-dbtalk)](https://github.com/leoninew/pomelo-dbtalk/releases)
 
-`dbtalk` is an LLM-ready database CLI for SQL operations, JSONL data transfer, permissions, and logical backups across SQLite, MySQL, and PostgreSQL.
+`dbtalk` is an LLM-ready database CLI for SQL operations and JSONL data transfer across SQLite, MySQL, PostgreSQL, and SQL Server, with permissions and logical backup tools for MySQL and PostgreSQL.
 
 [中文文档](README.zh-CN.md)
 
 ## Features
 
 - Run SQL with `query` and `exec`, including bound parameters and timeouts
-- Transfer JSONL data between SQLite, MySQL, and PostgreSQL
+- Transfer JSONL data between SQLite, MySQL, PostgreSQL, and SQL Server
 - Manage MySQL schemas and users, and PostgreSQL schemas and roles
 - Grant and revoke permission profiles; inspect native permissions with `permissions list/show`
 - Create and restore MySQL SQL dumps and PostgreSQL custom archives
@@ -42,6 +42,8 @@ uv sync --all-groups
 uv run dbtalk --help
 ```
 
+If the global command uses an editable tool installation, refresh it after dependency changes with `uv tool install --force --editable .` from this checkout. Editable source updates do not install new dependencies into the separate uv tool environment; `uv sync` only updates the project's environment.
+
 ## Quick start
 
 Reuse an existing `DBTALK_DSN_*` variable from the process environment or current `.env`. Replace the example name below; add a connection only if needed.
@@ -69,7 +71,9 @@ uv run dbtalk exec \
   --dry-run
 ```
 
-`query` is read-only; `exec` runs a write-capable session. Use `dbtalk -v <command>` or `dbtalk --verbose <command>` to enable operation logs on stderr and sanitized exception details. Logging is silent by default.
+`query` returns rows without committing; `exec` commits successful execution. SQLite/MySQL/PostgreSQL also configure database read-only query sessions. SQL Server uses the same SQLAlchemy execution flow without SQL syntax restrictions or database-enforced read-only mode. Use `dbtalk -v <command>` or `dbtalk --verbose <command>` to enable operation logs on stderr and sanitized exception details. Logging is silent by default.
+
+SQL Server uses synchronous `pymssql`, installed by uv without system ODBC. SQL files support standalone `GO` batch separators. JSONL transfer uses the connection's default schema and existing target tables; supported types and precision limits are documented in the [database guide](docs/database.md#sql-server-jsonl).
 
 ## Commands
 
@@ -102,6 +106,7 @@ Supported DSN examples:
 sqlite:///./data/app.db
 mysql+pymysql://user:password@host:3306/app
 postgresql+psycopg://user:password@host:5432/app
+mssql+pymssql://user:password@host:1433/app
 ```
 
 Every command accepts exactly one of `--dsn DSN` or `--dsn-env NAME`; `--dsn` remains available for direct integrations. Agent workflows use only `--dsn-env` with a `DBTALK_DSN_*` name. Process variables take precedence over the current `.env`; session examples declare variables directly in the command file. `.env.local` and other dotenv variants are not loaded. Defaults are in [dbtalk.yaml](dbtalk.yaml) and can be overridden with `DBTALK_` process environment variables.

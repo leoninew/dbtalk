@@ -87,7 +87,7 @@ pypi: ## Upload the current package version's sdist and wheel to PyPI.
 		"dist/$(DIST_STEM)-$(VERSION)-py3-none-any.whl"
 
 binary: ## Build a standalone executable with PyInstaller.
-	$(UV_RUN) pyinstaller --noconfirm --clean --onefile --name $(BINARY_NAME) --add-data "$(PROJECT_ROOT)/dbtalk.yaml$(PYINSTALLER_DATA_SEPARATOR)." --distpath $(BINARY_DIST_DIR) --workpath $(BINARY_BUILD_DIR) --specpath $(BINARY_BUILD_DIR) src/dbtalk/__main__.py
+	$(UV_RUN) pyinstaller --noconfirm --clean --onefile --name $(BINARY_NAME) --hidden-import pymssql --add-data "$(PROJECT_ROOT)/dbtalk.yaml$(PYINSTALLER_DATA_SEPARATOR)." --distpath $(BINARY_DIST_DIR) --workpath $(BINARY_BUILD_DIR) --specpath $(BINARY_BUILD_DIR) src/dbtalk/__main__.py
 
 release-image: ## Build the runtime container image.
 	$(DOCKER) build --tag $(IMAGE) .

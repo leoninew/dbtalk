@@ -7,15 +7,39 @@ from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass
 from math import ceil
 from time import monotonic
-from typing import Any
+from typing import Any, Protocol, cast
 
 from sqlalchemy import text
-from sqlalchemy.engine import URL, Connection, create_engine
+from sqlalchemy.engine import URL, Connection, CursorResult, create_engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
 from .dsn import ParsedDsn, parse_dsn
 from .models import DatabaseOperationError, ExecutionResult, QueryResult
+
+
+class _MssqlCursor(Protocol):
+    @property
+    def description(self) -> Sequence[object] | None: ...
+
+    @property
+    def rowcount(self) -> int: ...
+
+    def fetchmany(self, size: int) -> Sequence[object]: ...
+
+    def nextset(self) -> bool | None: ...
+
+
+def _consume_mssql_results(cursor: _MssqlCursor) -> int:
+    row_count = 0
+    while True:
+        if cursor.description is not None:
+            while cursor.fetchmany(1000):
+                pass
+        else:
+            row_count += max(cursor.rowcount, 0)
+        if not cursor.nextset():
+            return row_count
 
 
 @dataclass(frozen=True)
@@ -68,19 +92,33 @@ class DatabaseSession:
                 result = self._connection.execute(text(statement), dict(parameters))
             else:
                 result = self._connection.exec_driver_sql(statement)
+            return self._execution_result(result)
         except SQLAlchemyError as error:
             if self._deadline is not None and self._deadline.expired:
                 raise DatabaseOperationError("database execution timed out") from error
             raise DatabaseOperationError("database execution failed") from error
-        return ExecutionResult(row_count=max(result.rowcount, 0))
 
     def execute_literal(self, statement: str) -> ExecutionResult:
         try:
             result = self._connection.exec_driver_sql(statement)
+            return self._execution_result(result)
         except SQLAlchemyError as error:
             if self._deadline is not None and self._deadline.expired:
                 raise DatabaseOperationError("database execution timed out") from error
             raise DatabaseOperationError("database execution failed") from error
+
+    def _execution_result(self, result: CursorResult[Any]) -> ExecutionResult:
+        if self._connection.dialect.name == "mssql" and result.cursor is not None:
+            try:
+                return ExecutionResult(
+                    row_count=_consume_mssql_results(cast(_MssqlCursor, result.cursor))
+                )
+            except self._connection.dialect.loaded_dbapi.Error as error:
+                if self._deadline is not None and self._deadline.expired:
+                    raise DatabaseOperationError("database execution timed out") from error
+                raise DatabaseOperationError("database execution failed") from error
+            finally:
+                result.close()
         rowcount = result.rowcount
         return ExecutionResult(row_count=0 if rowcount is None or rowcount < 0 else rowcount)
 
@@ -109,7 +147,7 @@ class DatabaseClient:
                 parsed.url,
                 **_engine_options(parsed, timeout_seconds, connect_timeout_seconds),
             )
-        except SQLAlchemyError as error:
+        except (SQLAlchemyError, ImportError) as error:
             raise DatabaseOperationError("database engine could not be created") from error
 
     @property
@@ -171,7 +209,7 @@ class DatabaseClient:
 
     @contextmanager
     def _query_session(self) -> Iterator[DatabaseSession]:
-        """Open a read-only, timeout-bound session without inspecting SQL text."""
+        """Open a query session with dialect-specific safeguards and timeout."""
 
         try:
             with (
@@ -397,6 +435,11 @@ def _engine_options(
         connect_args["write_timeout"] = statement_timeout
     if parsed.dialect in {"mysql", "postgresql"} and connect_timeout_seconds is not None:
         connect_args["connect_timeout"] = max(1, ceil(connect_timeout_seconds))
+    if parsed.dialect == "mssql":
+        if timeout_seconds is not None:
+            connect_args["timeout"] = max(1, ceil(timeout_seconds))
+        if connect_timeout_seconds is not None:
+            connect_args["login_timeout"] = max(1, ceil(connect_timeout_seconds))
     if not connect_args:
         return {}
     return {"connect_args": connect_args}

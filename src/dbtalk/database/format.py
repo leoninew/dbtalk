@@ -15,9 +15,11 @@ from datetime import UTC, date, datetime, time, tzinfo
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import TextIO, cast
+from uuid import UUID
 
 from .models import (
     ColumnDefinition,
+    ColumnMetadata,
     DatabaseTransferError,
     JSONValue,
     TableBlock,
@@ -30,6 +32,12 @@ from .models import (
 
 TRANSFER_FORMAT = "dbtalk.database-transfer/v1"
 MAX_DATETIME_FRACTIONAL_PRECISION = 6
+_MSSQL_INTEGER_BOUNDS = {
+    "tinyint": (0, 255),
+    "smallint": (-32768, 32767),
+    "int": (-2147483648, 2147483647),
+    "bigint": (-9223372036854775808, 9223372036854775807),
+}
 _FRACTIONAL_SECOND = re.compile(r"(?<=\d{2}:\d{2}:\d{2})\.(?P<value>\d+)")
 _GO_DATETIME = re.compile(
     r"^(?P<date>\d{4}-\d{2}-\d{2}) "
@@ -37,6 +45,154 @@ _GO_DATETIME = re.compile(
     r"(?:\.(?P<fraction>\d+))? "
     r"(?P<offset>[+-]\d{4}) [A-Za-z][A-Za-z0-9_+/-]*$"
 )
+
+
+def normalize_mssql_export_value(value: object, column: ColumnDefinition) -> object:
+    if value is None:
+        return None
+    if column.declared_type == "UNIQUEIDENTIFIER":
+        if isinstance(value, UUID):
+            return str(value)
+        if isinstance(value, str):
+            try:
+                return str(UUID(value))
+            except ValueError:
+                pass
+        raise DatabaseTransferError(f"mssql column {column.name!r} contains an invalid UUID")
+    if column.declared_type == "BOOLEAN":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int) and value in (0, 1):
+            return bool(value)
+        raise DatabaseTransferError(f"mssql column {column.name!r} contains an invalid boolean")
+    if column.declared_type.startswith(("DECIMAL(", "NUMERIC(")) and not isinstance(
+        value, (Decimal, int)
+    ):
+        raise DatabaseTransferError(f"mssql column {column.name!r} contains a non-exact decimal")
+    return value
+
+
+def decode_mssql_value(value: JSONValue, column: ColumnMetadata, timezone: tzinfo) -> object:
+    if value is None:
+        if not column.nullable or column.identity:
+            raise DatabaseTransferError("NULL is not allowed in the target column")
+        return None
+    kind = column.type_name
+    try:
+        decoded = decode_value(value, "BOOLEAN" if kind == "bit" else kind.upper(), timezone)
+    except (ValueError, OverflowError):
+        raise DatabaseTransferError("value is outside the target representation") from None
+    if kind in _MSSQL_INTEGER_BOUNDS:
+        if isinstance(decoded, bool):
+            return int(decoded)
+        if not isinstance(decoded, (int, float, Decimal)) or not Decimal(str(decoded)).is_finite():
+            raise DatabaseTransferError("integer input is invalid")
+        number = int(decoded)
+        minimum, maximum = _MSSQL_INTEGER_BOUNDS[kind]
+        if number != decoded or not minimum <= number <= maximum:
+            raise DatabaseTransferError("integer exceeds target range or has fractional digits")
+        return number
+    if kind in {"numeric", "decimal"}:
+        return _mssql_decimal_value(decoded, column)
+    if kind == "uniqueidentifier":
+        if not isinstance(decoded, str):
+            raise DatabaseTransferError("UUID input must be text")
+        try:
+            return UUID(decoded)
+        except ValueError:
+            raise DatabaseTransferError("UUID input is invalid") from None
+    if kind in {"char", "varchar", "nchar", "nvarchar"}:
+        return _mssql_text_value(decoded, column)
+    if kind in {"binary", "varbinary"}:
+        if not isinstance(decoded, bytes):
+            raise DatabaseTransferError("binary input must use the BLOB encoding")
+        if column.max_length != -1 and len(decoded) > column.max_length:
+            raise DatabaseTransferError("binary input exceeds target length")
+        if kind == "binary" and len(decoded) != column.max_length:
+            raise DatabaseTransferError("fixed-width binary input would require padding")
+        return decoded
+    if kind in {"date", "time", "datetime", "datetime2", "smalldatetime"}:
+        return _mssql_temporal_value(decoded, column)
+    return decoded
+
+
+def _mssql_decimal_value(value: object, column: ColumnMetadata) -> Decimal:
+    if not isinstance(value, (int, Decimal)):
+        raise DatabaseTransferError("decimal input must be exact")
+    number = Decimal(value)
+    if not number.is_finite():
+        raise DatabaseTransferError("decimal input must be finite")
+    if not number:
+        return number
+    parts = number.as_tuple()
+    assert isinstance(parts.exponent, int)
+    digits = list(parts.digits)
+    exponent = parts.exponent
+    while digits and digits[-1] == 0:
+        digits.pop()
+        exponent += 1
+    if exponent < -column.scale or max(len(digits) + exponent, 0) > column.precision - column.scale:
+        raise DatabaseTransferError("decimal exceeds target precision or scale")
+    return number
+
+
+def _mssql_text_value(value: object, column: ColumnMetadata) -> str:
+    if not isinstance(value, str):
+        raise DatabaseTransferError("text input must be a string")
+    if column.type_name in {"nchar", "nvarchar"}:
+        encoding = "utf-16-le"
+    elif column.code_page:
+        encoding = f"cp{column.code_page}"
+    else:
+        raise DatabaseTransferError("target text code page is unavailable")
+    try:
+        encoded = value.encode(encoding)
+        if encoded.decode(encoding) != value:
+            raise DatabaseTransferError("text cannot round-trip through the target encoding")
+    except (UnicodeError, LookupError):
+        raise DatabaseTransferError("text cannot be represented in the target encoding") from None
+    if column.max_length != -1 and len(encoded) > column.max_length:
+        raise DatabaseTransferError("text exceeds target length")
+    if column.type_name in {"char", "nchar"} and len(encoded) != column.max_length:
+        raise DatabaseTransferError("fixed-width text would require padding")
+    return value
+
+
+def _mssql_temporal_value(value: object, column: ColumnMetadata) -> str:
+    if not isinstance(value, str):
+        raise DatabaseTransferError("temporal input must be a string")
+    fraction = _FRACTIONAL_SECOND.search(value)
+    digits = fraction.group("value") if fraction is not None else ""
+    precision = column.scale if column.type_name in {"datetime2", "time"} else 6
+    if any(digit != "0" for digit in digits[precision:]):
+        raise DatabaseTransferError("temporal input exceeds target precision")
+    try:
+        if column.type_name == "date":
+            return date.fromisoformat(value).isoformat()
+        if column.type_name == "time":
+            clock = time.fromisoformat(value)
+            if clock.tzinfo is not None:
+                raise DatabaseTransferError("time offsets are not supported")
+            return clock.isoformat()
+        instant = datetime.fromisoformat(value)
+        if instant.tzinfo is not None:
+            raise DatabaseTransferError("datetime input was not normalized")
+        if column.type_name == "smalldatetime" and (
+            not date(1900, 1, 1) <= instant.date() <= date(2079, 6, 6)
+            or instant.second
+            or instant.microsecond
+        ):
+            raise DatabaseTransferError("datetime is not representable as smalldatetime")
+        if column.type_name == "datetime":
+            milliseconds, remaining = divmod(instant.microsecond, 1000)
+            if instant.year < 1753 or remaining or milliseconds % 10 not in {0, 3, 7}:
+                raise DatabaseTransferError(
+                    "datetime is not representable at target range or precision"
+                )
+            return instant.isoformat(sep="T", timespec="milliseconds")
+        return instant.isoformat(sep="T")
+    except (ValueError, OverflowError):
+        raise DatabaseTransferError("temporal input is outside the target range") from None
 
 
 def gzip_output_path(output: Path) -> Path:
@@ -155,6 +311,8 @@ class JsonlStreamWriter:
 def scan_document(  # noqa: PLR0912
     input_path: Path,
     row_validator: Callable[[TableBlockHeader, tuple[JSONValue, ...], int], None] | None = None,
+    *,
+    table_validator: Callable[[TableBlockHeader], None] | None = None,
 ) -> TransferPreview:
     """Scan a JSONL file once, retaining only headers and row counts."""
 
@@ -180,6 +338,8 @@ def scan_document(  # noqa: PLR0912
                 if table_header.name in names:
                     raise DatabaseTransferError("JSONL transfer file has duplicate table blocks")
                 names.add(table_header.name)
+                if table_validator is not None:
+                    table_validator(table_header)
                 row_count = 0
                 while True:
                     row_line, raw_row = next(line_iterator, (0, ""))
@@ -389,9 +549,11 @@ def format_datetime_for_database(
 
 
 def type_family(declared_type: str) -> str:
-    """Map SQLite, MySQL and PostgreSQL declarations to portable families."""
+    """Map database declarations to portable families."""
 
     normalized = declared_type.upper().strip()
+    if normalized == "UNIQUEIDENTIFIER":
+        return "text"
     for family, tokens in _TYPE_FAMILY_RULES:
         if any(token in normalized for token in tokens):
             return family
@@ -510,6 +672,7 @@ def _parse_header(record: dict[str, object], line_number: int) -> TransferHeader
         "sqlite",
         "mysql",
         "postgresql",
+        "mssql",
     ):
         raise DatabaseTransferError(f"JSONL header at line {line_number} is invalid")
     return TransferHeader(format=TRANSFER_FORMAT, source=source)
@@ -848,6 +1011,7 @@ def _validate_header(header: TransferHeader) -> None:
         "sqlite",
         "mysql",
         "postgresql",
+        "mssql",
     ):
         raise DatabaseTransferError("transfer header is invalid")
 

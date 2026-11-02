@@ -1,4 +1,4 @@
-"""Public API and driver dispatch for SQLite/MySQL JSONL data transfer."""
+"""Public API and driver dispatch for JSONL database transfer."""
 
 from __future__ import annotations
 

@@ -9,7 +9,7 @@ from datetime import tzinfo
 from pathlib import Path
 from typing import Literal
 
-DatabaseDriver = Literal["sqlite", "mysql", "postgresql"]
+DatabaseDriver = Literal["sqlite", "mysql", "postgresql", "mssql"]
 TransferMode = Literal["insert", "upsert"]
 
 JSONScalar = None | bool | int | float | str
@@ -83,6 +83,25 @@ class TransferPreview:
 
 
 @dataclass(frozen=True)
+class ColumnMetadata:
+    """Database column properties used during transfer validation."""
+
+    name: str
+    type_name: str
+    max_length: int
+    precision: int
+    scale: int
+    nullable: bool
+    identity: bool
+    computed: bool
+    generated_always: bool
+    collation: str | None
+    user_defined: bool
+    has_default: bool = False
+    code_page: int | None = None
+
+
+@dataclass(frozen=True)
 class TableSchema:
     """Target table metadata used for compatibility and dependency checks."""
 
@@ -90,6 +109,9 @@ class TableSchema:
     columns: tuple[ColumnDefinition, ...]
     primary_key: tuple[str, ...]
     foreign_keys: tuple[str, ...]
+    schema_name: str | None = None
+    dialect: DatabaseDriver | None = None
+    column_metadata: tuple[ColumnMetadata, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -152,8 +174,12 @@ class TransferSummary:
     row_count: int
 
 
-_SECRET_ASSIGNMENT_PATTERN = re.compile(r"(?i)(mysql_pwd=|password=|pgpassword=)[^\s]+")
-_DSN_USERINFO_PATTERN = re.compile(r"(?i)((?:mysql|postgresql)(?:\+[\w.]+)?://)[^@\s]+@")
+_SECRET_ASSIGNMENT_PATTERN = re.compile(
+    r"(?i)(mysql_pwd=|password=|pgpassword=|pwd=)(?:'[^']*'|\"[^\"]*\"|[^\s;]+)"
+)
+_DSN_USERINFO_PATTERN = re.compile(
+    r"(?i)((?:mysql|postgresql|mssql|sqlserver)(?:\+[\w.]+)?://)[^@\s]+@"
+)
 _SQLALCHEMY_NOISE_MARKERS = ("[SQL:", "[parameters:", "(Background on this error at:")
 
 
@@ -204,7 +230,12 @@ def _exception_chain(error: BaseException) -> list[BaseException]:
     while current is not None and id(current) not in seen:
         seen.add(id(current))
         chain.append(current)
-        current = current.__cause__ if current.__cause__ is not None else current.__context__
+        if current.__cause__ is not None:
+            current = current.__cause__
+        elif not current.__suppress_context__:
+            current = current.__context__
+        else:
+            current = None
     return chain
 
 

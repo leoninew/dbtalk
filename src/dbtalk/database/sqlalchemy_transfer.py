@@ -1,15 +1,17 @@
-"""SQLAlchemy Core adapter for SQLite, MySQL and PostgreSQL JSONL transfer."""
+"""SQLAlchemy Core adapter for JSONL database transfer."""
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Iterator
+from contextlib import suppress
 from datetime import timedelta
 from time import monotonic
 from typing import Any, Literal
 
 from sqlalchemy import inspect
 from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql import text
 from sqlalchemy.sql.elements import TextClause
@@ -19,11 +21,13 @@ from .format import (
     TRANSFER_FORMAT,
     encode_value,
     iter_document_tables,
+    normalize_mssql_export_value,
     open_document_writer,
     scan_document,
 )
 from .models import (
     ColumnDefinition,
+    ColumnMetadata,
     DatabaseTransferError,
     ExportOptions,
     ImportOptions,
@@ -32,15 +36,19 @@ from .models import (
     TableSchema,
     TransferConnection,
     TransferHeader,
+    TransferMode,
     TransferSummary,
 )
 from .mysql import _mysql_time_of_day, _normalize_mysql_zero_date
 from .schema import (
+    mssql_column_definition,
     order_table_names,
-    select_table_schemas,
+    select_table_names,
     select_transfer_preview,
     table_row_values,
+    validate_export_table,
     validate_import_row,
+    validate_selected_foreign_keys,
     validate_target_table,
 )
 
@@ -48,6 +56,18 @@ logger = logging.getLogger("dbtalk")
 BATCH_SIZE = 1000
 BATCH_BYTE_BUDGET = 8 * 1024 * 1024
 PROGRESS_INTERVAL_SECONDS = 5.0
+_MSSQL_COLUMNS = text("""
+SELECT col.name, typ.name AS type_name, col.max_length, col.precision, col.scale,
+       col.is_nullable, col.is_identity, col.is_computed, col.generated_always_type,
+       col.collation_name, typ.is_user_defined, col.default_object_id,
+       CONVERT(int, COLLATIONPROPERTY(col.collation_name, 'CodePage')) AS code_page
+FROM sys.columns AS col
+JOIN sys.tables AS tbl ON tbl.object_id = col.object_id
+JOIN sys.schemas AS sch ON sch.schema_id = tbl.schema_id
+JOIN sys.types AS typ ON typ.user_type_id = col.user_type_id
+WHERE sch.name = :schema_name AND tbl.name = :table_name
+ORDER BY col.column_id
+""")
 
 
 class _TableProgress:
@@ -116,11 +136,10 @@ def export_sqlalchemy(options: ExportOptions) -> TransferSummary:
     try:
         with engine.connect() as connection:
             _prepare_connection(connection, parsed, read_only=True)
-            schemas = select_table_schemas(
-                _load_schemas(connection),
-                options.include_tables,
-                options.exclude_tables,
-            )
+            schemas = _load_schemas(connection, options.include_tables, options.exclude_tables)
+            validate_selected_foreign_keys(schemas)
+            for schema in schemas.values():
+                validate_export_table(schema)
             table_count = 0
             row_count = 0
             with open_document_writer(
@@ -136,9 +155,14 @@ def export_sqlalchemy(options: ExportOptions) -> TransferSummary:
                         )
                     else:
                         progress = _TableProgress("export", parsed, schema.name, None, 0)
+                        execution_options = (
+                            {}
+                            if parsed.dialect == "mssql"
+                            else {"yield_per": BATCH_SIZE, "stream_results": True}
+                        )
                         with connection.exec_driver_sql(
                             _select_sql(connection, schema),
-                            execution_options={"yield_per": BATCH_SIZE, "stream_results": True},
+                            execution_options=execution_options,
                         ) as result:
                             written = writer.write_table(
                                 header, _encoded_rows(result, schema, options, parsed, progress)
@@ -170,8 +194,21 @@ def import_sqlalchemy(options: ImportOptions) -> TransferSummary:
     try:
         with engine.connect() as connection:
             _prepare_connection(connection, parsed, read_only=False)
-            schemas = _load_schemas(connection)
-            validated_targets: set[str] = set()
+            schemas: dict[str, TableSchema] = {}
+            inspector = inspect(connection)
+            schema_name = inspector.default_schema_name if parsed.dialect == "mssql" else None
+            available_tables = set(inspector.get_table_names(schema=schema_name))
+
+            def validate_table(header: TableBlockHeader) -> None:
+                if header.name in options.exclude_tables:
+                    return
+                if options.include_tables and header.name not in options.include_tables:
+                    return
+                if header.name not in available_tables:
+                    raise DatabaseTransferError(f"target table {header.name!r} does not exist")
+                target = _load_table_schema(connection, inspector, header.name)
+                validate_target_table(header, target, options.mode)
+                schemas[header.name] = target
 
             def validate_row(
                 header: TableBlockHeader, row: tuple[JSONValue, ...], line: int
@@ -184,9 +221,6 @@ def import_sqlalchemy(options: ImportOptions) -> TransferSummary:
                 target = schemas.get(header.name)
                 if target is None:
                     raise DatabaseTransferError(f"target table {header.name!r} does not exist")
-                if header.name not in validated_targets:
-                    validate_target_table(header, target, options.mode)
-                    validated_targets.add(header.name)
                 try:
                     _target_values(row, header, target, options, parsed)
                 except DatabaseTransferError as error:
@@ -197,8 +231,9 @@ def import_sqlalchemy(options: ImportOptions) -> TransferSummary:
             preview = scan_document(
                 options.input,
                 row_validator=validate_row,
+                table_validator=validate_table,
             )
-            if preview.header.source not in ("sqlite", "mysql", "postgresql"):
+            if preview.header.source not in ("sqlite", "mysql", "postgresql", "mssql"):
                 raise DatabaseTransferError("JSONL source driver is invalid")
             selected = select_transfer_preview(
                 preview,
@@ -225,6 +260,7 @@ def import_sqlalchemy(options: ImportOptions) -> TransferSummary:
             connection.rollback()
             selected_names = set(ordered_names)
             table_row_counts = {table.header.name: table.row_count for table in selected.tables}
+            table_headers = {table.header.name: table.header for table in selected.tables}
             committed_rows = 0
             expected_index = 0
             for _, table_header, rows in iter_document_tables(options.input):
@@ -232,9 +268,13 @@ def import_sqlalchemy(options: ImportOptions) -> TransferSummary:
                     for _ in rows:
                         pass
                     continue
-                if table_header.name != ordered_names[expected_index]:
+                if (
+                    expected_index >= len(ordered_names)
+                    or table_header.name != ordered_names[expected_index]
+                    or table_header != table_headers[table_header.name]
+                ):
                     raise DatabaseTransferError(
-                        "JSONL table order changed between preflight and import"
+                        "JSONL metadata changed between preflight and import"
                     )
                 written = _import_table(
                     connection,
@@ -288,7 +328,7 @@ def _create_engine(parsed: ParsedDsn) -> Engine:
         from sqlalchemy import create_engine
 
         return create_engine(parsed.url)
-    except SQLAlchemyError as error:
+    except (SQLAlchemyError, ImportError) as error:
         raise DatabaseTransferError("database engine could not be created") from error
 
 
@@ -303,30 +343,84 @@ def _prepare_connection(connection: Connection, parsed: ParsedDsn, *, read_only:
         raise DatabaseTransferError("database session could not be prepared") from error
 
 
-def _load_schemas(connection: Connection) -> dict[str, TableSchema]:
+def _load_schemas(
+    connection: Connection,
+    include_tables: tuple[str, ...] = (),
+    exclude_tables: tuple[str, ...] = (),
+) -> dict[str, TableSchema]:
     inspector = inspect(connection)
-    schemas: dict[str, TableSchema] = {}
     try:
-        for name in sorted(inspector.get_table_names()):
-            columns = tuple(
-                ColumnDefinition(str(column["name"]), str(column.get("type") or ""))
-                for column in inspector.get_columns(name)
-            )
-            primary = inspector.get_pk_constraint(name).get("constrained_columns") or []
-            foreign_keys: list[str] = []
-            for foreign_key in inspector.get_foreign_keys(name):
-                referenced = foreign_key.get("referred_table")
-                if isinstance(referenced, str) and referenced not in foreign_keys:
-                    foreign_keys.append(referenced)
-            schemas[name] = TableSchema(
-                name=name,
-                columns=columns,
-                primary_key=tuple(str(column) for column in primary),
-                foreign_keys=tuple(foreign_keys),
-            )
+        schema = inspector.default_schema_name if connection.dialect.name == "mssql" else None
+        names = select_table_names(
+            dict.fromkeys(sorted(inspector.get_table_names(schema=schema))),
+            include_tables,
+            exclude_tables,
+            "source database",
+        )
+        return {name: _load_table_schema(connection, inspector, name) for name in names}
     except SQLAlchemyError as error:
         raise DatabaseTransferError("database schema inspection failed") from error
-    return schemas
+
+
+def _load_table_schema(connection: Connection, inspector: Inspector, name: str) -> TableSchema:
+    is_mssql = connection.dialect.name == "mssql"
+    schema = inspector.default_schema_name if is_mssql else None
+    metadata: tuple[ColumnMetadata, ...] = ()
+    if is_mssql:
+        if not isinstance(schema, str) or not schema:
+            raise DatabaseTransferError("mssql default schema could not be determined")
+        with connection.execute(
+            _MSSQL_COLUMNS, {"schema_name": schema, "table_name": name}
+        ) as result:
+            metadata = tuple(
+                ColumnMetadata(
+                    name=row["name"],
+                    type_name=row["type_name"].lower(),
+                    max_length=row["max_length"],
+                    precision=row["precision"],
+                    scale=row["scale"],
+                    nullable=bool(row["is_nullable"]),
+                    identity=bool(row["is_identity"]),
+                    computed=bool(row["is_computed"]),
+                    generated_always=bool(row["generated_always_type"]),
+                    collation=row["collation_name"],
+                    user_defined=bool(row["is_user_defined"]),
+                    has_default=bool(row["default_object_id"]),
+                    code_page=row["code_page"],
+                )
+                for row in result.mappings()
+            )
+        if not metadata:
+            raise DatabaseTransferError(f"mssql table {name!r} has no visible column metadata")
+        columns = tuple(mssql_column_definition(column, name) for column in metadata)
+    else:
+        columns = tuple(
+            ColumnDefinition(str(column["name"]), str(column.get("type") or ""))
+            for column in inspector.get_columns(name, schema=schema)
+        )
+    primary = tuple(
+        inspector.get_pk_constraint(name, schema=schema).get("constrained_columns") or ()
+    )
+    if is_mssql and not set(primary).issubset(column.name for column in columns):
+        raise DatabaseTransferError(f"mssql table {name!r} has incomplete primary-key metadata")
+    foreign_keys: list[str] = []
+    for foreign in inspector.get_foreign_keys(name, schema=schema):
+        if is_mssql and foreign.get("referred_schema") not in (None, schema):
+            raise DatabaseTransferError(f"mssql table {name!r} has a cross-schema foreign key")
+        parent = foreign.get("referred_table")
+        if is_mssql and (not isinstance(parent, str) or not parent):
+            raise DatabaseTransferError(f"mssql table {name!r} has an unidentified foreign key")
+        if isinstance(parent, str) and parent not in foreign_keys:
+            foreign_keys.append(parent)
+    return TableSchema(
+        name,
+        columns,
+        primary,
+        tuple(foreign_keys),
+        schema_name=schema,
+        dialect="mssql" if is_mssql else None,
+        column_metadata=metadata,
+    )
 
 
 def _ordered_schemas(schemas: dict[str, TableSchema]) -> tuple[TableSchema, ...]:
@@ -338,7 +432,10 @@ def _select_sql(connection: Connection, schema: TableSchema) -> str:
     quoted_columns = ", ".join(
         _quote_identifier(connection, column.name) for column in schema.columns
     )
-    return f"SELECT {quoted_columns} FROM {_quote_identifier(connection, schema.name)}"
+    quoted_table = _quote_identifier(connection, schema.name)
+    if schema.schema_name is not None:
+        quoted_table = f"{_quote_identifier(connection, schema.schema_name)}.{quoted_table}"
+    return f"SELECT {quoted_columns} FROM {quoted_table}"
 
 
 def _encoded_rows(
@@ -356,6 +453,8 @@ def _encoded_rows(
                     value = _normalize_mysql_zero_date(value, column.declared_type, options)
                     if isinstance(value, timedelta):
                         value = _mysql_time_of_day(value)
+                elif parsed.dialect == "mssql":
+                    value = normalize_mssql_export_value(value, column)
                 values.append(value)
             yield tuple(
                 encode_value(value, column.declared_type, options.timezone)
@@ -432,9 +531,19 @@ def _import_table(
     committed_rows: int,
 ) -> int:
     names = [column.name for column in header.columns]
+    parameter_names = [f"value_{index}" for index in range(len(names))]
+    if parsed.dialect == "mssql":
+        return _import_mssql_table(
+            connection,
+            options.mode,
+            header,
+            _parameter_batches(rows, header, target, options, parsed, parameter_names),
+            target,
+            total_rows,
+            _TableProgress("import", parsed, header.name, total_rows, committed_rows),
+        )
     quoted_table = _quote_identifier(connection, header.name)
     quoted_columns = ", ".join(_quote_identifier(connection, name) for name in names)
-    parameter_names = [f"value_{index}" for index in range(len(names))]
     placeholders = ", ".join(f":{name}" for name in parameter_names)
     insert_sql = f"INSERT INTO {quoted_table} ({quoted_columns}) VALUES ({placeholders})"
     insert_statement = text(insert_sql)
@@ -508,6 +617,90 @@ def _import_table(
         raise DatabaseTransferError(
             f"{parsed.dialect.capitalize()} import failed for table {header.name!r}"
         ) from error
+    return written
+
+
+def _import_mssql_table(
+    connection: Connection,
+    mode: TransferMode,
+    header: TableBlockHeader,
+    batches: Iterator[list[dict[str, object]]],
+    target: TableSchema,
+    expected_rows: int,
+    progress: _TableProgress,
+) -> int:
+    quote = connection.dialect.identifier_preparer.quote
+    if target.schema_name is None:
+        raise DatabaseTransferError("mssql target schema is missing")
+    table = f"{quote(target.schema_name)}.{quote(header.name)}"
+    names = [column.name for column in header.columns]
+    columns = {column.name: column for column in target.column_metadata}
+    parameters = {name: f"value_{index}" for index, name in enumerate(names)}
+
+    def binding(name: str) -> str:
+        parameter = f":{parameters[name]}"
+        return (
+            f"CAST({parameter} AS VARBINARY(MAX))"
+            if columns[name].type_name in {"binary", "varbinary"}
+            else parameter
+        )
+
+    insert = text(
+        f"INSERT INTO {table} ({', '.join(quote(name) for name in names)}) "
+        f"VALUES ({', '.join(binding(name) for name in names)})"
+    )
+    updated = [
+        name for name in names if name not in target.primary_key and not columns[name].identity
+    ]
+    exists = None
+    update = None
+    if mode == "upsert":
+        predicate = " AND ".join(f"{quote(name)} = {binding(name)}" for name in target.primary_key)
+        exists = text(f"SELECT 1 FROM {table} WITH (UPDLOCK, HOLDLOCK) WHERE {predicate}")
+        if updated:
+            update = text(
+                f"UPDATE {table} SET "
+                + ", ".join(f"{quote(name)} = {binding(name)}" for name in updated)
+                + f" WHERE {predicate}"
+            )
+    identity = any(columns[name].identity for name in names)
+    identity_enabled = False
+    written = 0
+    try:
+        with connection.begin():
+            if identity:
+                identity_enabled = True
+                connection.exec_driver_sql(f"SET IDENTITY_INSERT {table} ON").close()
+            for batch in batches:
+                if exists is not None:
+                    for bound in batch:
+                        with connection.execute(exists, bound) as result:
+                            found = result.first() is not None
+                        if not found:
+                            connection.execute(insert, bound).close()
+                        elif update is not None:
+                            connection.execute(update, bound).close()
+                else:
+                    connection.execute(insert, batch).close()
+                progress.advance(len(batch))
+                written += len(batch)
+                del batch
+            if written != expected_rows:
+                raise DatabaseTransferError("JSONL row count changed between preflight and import")
+            if identity:
+                connection.exec_driver_sql(f"SET IDENTITY_INSERT {table} OFF").close()
+                identity_enabled = False
+    except BaseException:
+        if identity_enabled:
+            try:
+                connection.exec_driver_sql(f"SET IDENTITY_INSERT {table} OFF").close()
+                connection.rollback()
+            except Exception:
+                with suppress(Exception):
+                    connection.invalidate()
+        progress.finish("rolled_back")
+        raise
+    progress.finish("committed")
     return written
 
 

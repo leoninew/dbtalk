@@ -1,4 +1,4 @@
-"""CLI contract for SQLite/MySQL JSONL data transfer."""
+"""CLI contract for generic SQL operations and JSONL data transfer."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from .operations import (
     query_from_dsn,
     read_sql_file,
     render_query,
+    resolve_operation_dsn,
     sql_script_statements,
 )
 from .transfer import (
@@ -81,8 +82,8 @@ def connection_from_options(
     dsn: str | None = None,
     dsn_env: str | None = None,
 ) -> TransferConnection:
-    if driver not in ("sqlite", "mysql", "postgresql"):
-        raise click.UsageError("database driver must be sqlite or mysql or postgresql")
+    if driver not in ("sqlite", "mysql", "postgresql", "mssql"):
+        raise click.UsageError("database driver must be sqlite or mysql or postgresql or mssql")
     typed_driver = cast(DatabaseDriver, driver)
     if (dsn is None) == (dsn_env is None):
         raise click.UsageError("provide exactly one of --dsn or --dsn-env")
@@ -174,7 +175,7 @@ def database() -> None:
 @database.command("export", context_settings=CONTEXT_SETTINGS, log_lifecycle=False)
 @click.option(
     "--source",
-    type=click.Choice(["sqlite", "mysql", "postgresql"]),
+    type=click.Choice(["sqlite", "mysql", "postgresql", "mssql"]),
     required=True,
 )
 @click.option(
@@ -254,6 +255,8 @@ def export_command_arguments(options: dict[str, object]) -> ExportCommandArgumen
         driver = "mysql"
     elif source == "postgresql":
         driver = "postgresql"
+    elif source == "mssql":
+        driver = "mssql"
     else:
         raise RuntimeError("Click did not provide a valid source driver")
     if output_path is not None and not isinstance(output_path, Path):
@@ -289,7 +292,7 @@ def export_command_arguments(options: dict[str, object]) -> ExportCommandArgumen
 @database.command("import", context_settings=CONTEXT_SETTINGS, log_lifecycle=False)
 @click.option(
     "--target",
-    type=click.Choice(["sqlite", "mysql", "postgresql"]),
+    type=click.Choice(["sqlite", "mysql", "postgresql", "mssql"]),
     required=True,
 )
 @click.option(
@@ -358,6 +361,8 @@ def import_command_arguments(options: dict[str, object]) -> ImportCommandArgumen
         driver = "mysql"
     elif target == "postgresql":
         driver = "postgresql"
+    elif target == "mssql":
+        driver = "mssql"
     else:
         raise RuntimeError("Click did not provide a valid target driver")
     if not isinstance(input_path, Path):
@@ -496,7 +501,7 @@ def query_command(
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Print each SQL statement without executing.",
+    help="Print SQL statements or DSN-specific file batches without connecting.",
 )
 @click.pass_context
 def exec_command(
@@ -533,11 +538,20 @@ def exec_command(
                 raise DatabaseOperationError("provide exactly one of --sql or --file")
             if parameters:
                 raise DatabaseOperationError("--param cannot be used with --file")
-            statements = sql_script_statements(read_sql_file(sql_file))
-            if not statements:
-                raise DatabaseOperationError("SQL file contains no executable statements")
             if dry_run:
-                _echo_dry_run_statements(statements)
+                parsed = (
+                    resolve_operation_dsn(dsn_value, dsn_env)
+                    if dsn_value is not None or dsn_env is not None
+                    else None
+                )
+                statements = sql_script_statements(
+                    read_sql_file(sql_file), dialect=parsed.dialect if parsed is not None else None
+                )
+                if not statements:
+                    raise DatabaseOperationError("SQL file contains no executable statements")
+                _echo_dry_run_statements(
+                    statements, batches=parsed is not None and parsed.dialect == "mssql"
+                )
                 return
             result = execute_sql_file_from_dsn(
                 dsn_value,
@@ -553,9 +567,12 @@ def exec_command(
     click.echo(f"SQL execution completed ({result.row_count} rows affected)")
 
 
-def _echo_dry_run_statements(statements: tuple[str, ...]) -> None:
-    for statement in statements:
-        rendered = statement if statement.endswith(";") else f"{statement};"
+def _echo_dry_run_statements(statements: tuple[str, ...], *, batches: bool = False) -> None:
+    for index, statement in enumerate(statements):
+        if batches and index:
+            click.echo("GO\n")
+        rendered = statement if batches or statement.endswith(";") else f"{statement};"
         click.echo(rendered)
         click.echo()
-    click.echo(f"SQL dry-run completed ({len(statements)} statements)")
+    unit = "batches" if batches else "statements"
+    click.echo(f"SQL dry-run completed ({len(statements)} {unit})")

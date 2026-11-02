@@ -8,10 +8,13 @@ from datetime import tzinfo
 
 from .format import (
     MAX_DATETIME_FRACTIONAL_PRECISION,
+    decode_mssql_value,
     decode_value,
     type_family,
 )
 from .models import (
+    ColumnDefinition,
+    ColumnMetadata,
     DatabaseTransferError,
     JSONValue,
     TableBlock,
@@ -29,6 +32,9 @@ def validate_target_table(
 
     if source.name != target.name:
         raise DatabaseTransferError("target table metadata does not match transfer file")
+    if target.dialect == "mssql":
+        _validate_mssql_target(source, target, mode)
+        return
     target_columns = {column.name: column for column in target.columns}
     for source_column in source.columns:
         target_column = target_columns.get(source_column.name)
@@ -192,20 +198,8 @@ def table_block_values(
 ) -> tuple[tuple[object, ...], ...]:
     """Decode a validated table block for one target schema and driver policy."""
 
-    target_columns = {column.name: column for column in target.columns}
     return tuple(
-        tuple(
-            decode_value(
-                value,
-                target_columns[column.name].declared_type,
-                target_timezone,
-                _datetime_precision(
-                    target_columns[column.name].declared_type,
-                    default_datetime_precision,
-                ),
-            )
-            for value, column in zip(row, table.header.columns, strict=True)
-        )
+        table_row_values(row, table.header, target, target_timezone, default_datetime_precision)
         for row in table.rows
     )
 
@@ -220,6 +214,15 @@ def table_row_values(
     """Decode one JSONL row for a target schema."""
 
     target_columns = {column.name: column for column in target.columns}
+    if target.dialect == "mssql":
+        metadata = {column.name: column for column in target.column_metadata}
+        values: list[object] = []
+        for value, source in zip(row, header.columns, strict=True):
+            try:
+                values.append(decode_mssql_value(value, metadata[source.name], target_timezone))
+            except DatabaseTransferError as error:
+                raise DatabaseTransferError(f"column {source.name!r}: {error}") from error
+        return tuple(values)
     return tuple(
         decode_value(
             value,
@@ -294,3 +297,113 @@ def _datetime_precision(declared_type: str, default: int | None) -> int | None:
         re.IGNORECASE,
     )
     return int(match.group(1)) if match is not None else default
+
+
+def is_generated_column(column: ColumnMetadata) -> bool:
+    return (
+        column.computed
+        or column.generated_always
+        or column.type_name in {"timestamp", "rowversion"}
+    )
+
+
+def mssql_column_definition(column: ColumnMetadata, table_name: str) -> ColumnDefinition:
+    label = f"mssql table {table_name!r} column {column.name!r}"
+    if is_generated_column(column):
+        return ColumnDefinition(column.name, column.type_name.upper())
+    if column.user_defined:
+        raise DatabaseTransferError(f"{label} has an unsupported user-defined type")
+    declared = column.type_name.upper()
+    if column.type_name == "bit":
+        declared = "BOOLEAN"
+    elif column.type_name in {"datetime2", "time"}:
+        if not 0 <= column.scale <= 6:
+            raise DatabaseTransferError(f"{label} has unsupported temporal precision")
+        declared += f"({column.scale})"
+    elif column.type_name in {"numeric", "decimal"}:
+        if not 1 <= column.precision <= 38 or not 0 <= column.scale <= column.precision:
+            raise DatabaseTransferError(f"{label} has invalid numeric metadata")
+        declared += f"({column.precision},{column.scale})"
+    elif column.type_name in {"char", "varchar", "nchar", "nvarchar", "binary", "varbinary"}:
+        if column.max_length == -1 and column.type_name in {"varchar", "nvarchar", "varbinary"}:
+            declared += "(MAX)"
+        else:
+            if column.max_length <= 0 or (
+                column.type_name in {"nchar", "nvarchar"} and column.max_length % 2
+            ):
+                raise DatabaseTransferError(f"{label} has invalid length metadata")
+            length = (
+                column.max_length // 2 if column.type_name.startswith("n") else column.max_length
+            )
+            declared += f"({length})"
+    elif column.type_name not in {
+        "tinyint",
+        "smallint",
+        "int",
+        "bigint",
+        "uniqueidentifier",
+        "date",
+        "smalldatetime",
+        "datetime",
+    }:
+        raise DatabaseTransferError(f"{label} has unsupported type {declared!r}")
+    return ColumnDefinition(column.name, declared)
+
+
+def validate_export_table(schema: TableSchema) -> None:
+    for column in schema.column_metadata:
+        if is_generated_column(column):
+            raise DatabaseTransferError(
+                f"mssql table {schema.name!r} column {column.name!r} "
+                "is generated and cannot be exported"
+            )
+
+
+def _validate_mssql_target(
+    source: TableBlockHeader, target: TableSchema, mode: TransferMode
+) -> None:
+    provided = {column.name for column in source.columns}
+    available = {column.name: column for column in target.column_metadata}
+    declared = {column.name: column.declared_type for column in target.columns}
+    for metadata in target.column_metadata:
+        if is_generated_column(metadata):
+            if metadata.name in provided:
+                raise DatabaseTransferError(f"target column {metadata.name!r} is generated")
+        elif metadata.name not in provided and not (
+            metadata.nullable or metadata.identity or metadata.has_default
+        ):
+            raise DatabaseTransferError(f"target column {metadata.name!r} is required")
+    for column in source.columns:
+        if column.name not in available:
+            raise DatabaseTransferError(f"target column {column.name!r} does not exist")
+        if not compatible_types(column.declared_type, declared[column.name]):
+            raise DatabaseTransferError(f"target column {column.name!r} has an incompatible type")
+        if re.fullmatch(
+            r"DATETIMEOFFSET(?:\s*\(\s*\d+\s*\))?", column.declared_type.upper().strip()
+        ):
+            raise DatabaseTransferError(
+                f"source column {column.name!r} has an unsupported offset type"
+            )
+        temporal = re.fullmatch(
+            r"(?:DATETIME2|TIME)\s*\(\s*(\d+)\s*\)", column.declared_type.upper()
+        )
+        if temporal is not None and int(temporal.group(1)) > 6:
+            raise DatabaseTransferError(
+                f"source column {column.name!r} has unsupported temporal precision"
+            )
+    primary = target.primary_key
+    expected = tuple(name for name in primary if name in provided)
+    if source.primary_key != expected or (
+        mode == "upsert" and (not primary or expected != primary)
+    ):
+        raise DatabaseTransferError("target primary key does not match transfer file")
+    if any(
+        not (
+            available[name].identity
+            or available[name].has_default
+            or is_generated_column(available[name])
+        )
+        for name in primary
+        if name not in provided
+    ):
+        raise DatabaseTransferError("target primary key cannot be generated")

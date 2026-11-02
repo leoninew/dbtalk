@@ -4,14 +4,14 @@
 [![PyPI](https://img.shields.io/pypi/v/pomelo-dbtalk)](https://pypi.org/project/pomelo-dbtalk/)
 [![GitHub Release](https://img.shields.io/github/v/release/leoninew/pomelo-dbtalk)](https://github.com/leoninew/pomelo-dbtalk/releases)
 
-`dbtalk` 是一个面向大模型和 AI Agent 的数据库命令行工具，支持 SQLite、MySQL 和 PostgreSQL 的 SQL 操作、JSONL 数据传输、权限管理与逻辑备份。
+`dbtalk` 是一个面向大模型和 AI Agent 的数据库命令行工具，支持 SQLite、MySQL、PostgreSQL 和 SQL Server 的 SQL 操作与 JSONL 数据传输，以及 MySQL、PostgreSQL 的权限管理与逻辑备份。
 
 [English](README.md)
 
 ## 功能
 
 - 使用 `query` 和 `exec` 执行 SQL，支持参数绑定和超时控制
-- 在 SQLite、MySQL、PostgreSQL 之间导出和导入 JSONL 数据
+- 在 SQLite、MySQL、PostgreSQL、SQL Server 之间导出和导入 JSONL 数据
 - 管理 MySQL schema、user 和 PostgreSQL schema、role
 - 使用 `grant`、`revoke` 管理权限 profile，使用 `permissions list/show` 查看原生权限
 - 创建和恢复 MySQL SQL dump、PostgreSQL custom archive
@@ -42,6 +42,8 @@ uv sync --all-groups
 uv run dbtalk --help
 ```
 
+如果全局命令使用 editable 工具安装，依赖变更后在本仓库执行 `uv tool install --force --editable .` 同步。源码变更会即时生效，但新增依赖不会自动进入独立的 uv tool 环境；`uv sync` 只更新项目环境。
+
 ## 快速开始
 
 复用进程环境或当前目录 `.env` 中已有的 `DBTALK_DSN_*`，将示例变量名替换为实际名称；无适用连接时再配置。
@@ -69,7 +71,9 @@ uv run dbtalk exec \
   --dry-run
 ```
 
-`query` 使用只读会话，`exec` 使用写会话。使用 `dbtalk -v <命令>` 或 `dbtalk --verbose <命令>` 可开启 stderr 操作日志和清洗后的异常细节；默认不输出 logging 日志。
+`query` 读取结果且不提交事务，`exec` 成功后提交。SQLite/MySQL/PostgreSQL 还会设置数据库只读查询会话；SQL Server 复用同一 SQLAlchemy 执行流程，不检查 SQL 语法，也没有数据库强制只读设置。使用 `dbtalk -v <命令>` 或 `dbtalk --verbose <命令>` 可开启 stderr 操作日志和清洗后的异常细节；默认不输出 logging 日志。
+
+SQL Server 使用同步 `pymssql`，由 uv 安装，无需系统 ODBC。SQL 文件支持独立行 `GO` 分批。JSONL 传输使用连接默认 schema 和既有目标表；类型与精度支持范围见[数据库手册](docs/database.md#sql-server-jsonl)。
 
 ## 命令
 
@@ -102,6 +106,7 @@ uv run dbtalk exec \
 sqlite:///./data/app.db
 mysql+pymysql://user:password@host:3306/app
 postgresql+psycopg://user:password@host:5432/app
+mssql+pymssql://user:password@host:1433/app
 ```
 
 每个命令必须在 `--dsn DSN` 和 `--dsn-env NAME` 中选择一个；`--dsn` 保留给直接集成。Agent 只使用 `--dsn-env` 引用 `DBTALK_DSN_*` 名称，优先读取进程变量，缺失时才读取当前目录 `.env`；会话示例直接在命令文件声明变量。不会加载 `.env.local` 或其他 dotenv 变体。默认配置位于 [dbtalk.yaml](dbtalk.yaml)，可使用 `DBTALK_` 前缀的进程环境变量覆盖。

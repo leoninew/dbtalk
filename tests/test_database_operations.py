@@ -87,6 +87,9 @@ def create_database(path: Path) -> None:
 
 
 def test_dsn_parses_supported_sync_and_async_urls() -> None:
+    assert parse_dsn("mssql+pymssql://user:secret@db.example/app").dialect == "mssql"
+    with pytest.raises(DatabaseOperationError, match="mssql does not support an async client"):
+        parse_dsn("mssql+pymssql://user:secret@db.example/app", async_mode=True)
     parsed = parse_dsn("mysql+pymysql://user:secret@db.example:3307/app")
     assert parsed.url.drivername == "mysql+pymysql"
     assert parsed.display == "mysql+pymysql://user:***@db.example:3307/app"
@@ -103,6 +106,11 @@ def test_dsn_parses_supported_sync_and_async_urls() -> None:
         parse_dsn("postgresql+psycopg://user:secret@db.example/", async_mode=True).database is None
     )
     assert parse_dsn("sqlite:///data.db", async_mode=True).url.drivername == "sqlite+aiosqlite"
+
+
+def test_mssql_transfer_accepts_explicit_connection() -> None:
+    connection = TransferConnection("mssql", dsn="mssql+pymssql://user:secret@db.example/app")
+    validate_connection(connection)
 
 
 def test_dsn_rejects_invalid_or_unsupported_values() -> None:
@@ -640,6 +648,34 @@ def test_exec_file_runs_literal_script_in_one_transaction(
     assert json.loads(query.stdout)["rows"] == [{"name": '{"optional":true}'}]
 
 
+@pytest.mark.parametrize(
+    "dsn",
+    ["mysql+pymysql://example.invalid/app", "postgresql+psycopg://example.invalid/app"],
+)
+def test_file_dry_run_keeps_existing_statement_preview(
+    dsn: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "preview.sql"
+    path.write_text("BEGIN;\nSELECT 1;\nSELECT 2;\nCOMMIT;", encoding="utf-8")
+    monkeypatch.setattr(
+        "dbtalk.database.operations.DatabaseClient",
+        lambda *args, **kwargs: pytest.fail("dry-run must not connect"),
+    )
+    result = CliRunner().invoke(cli, ["exec", "--dsn", dsn, "--file", str(path), "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "SQL dry-run completed (2 statements)" in result.output
+    assert "BEGIN" not in result.output and "COMMIT" not in result.output
+
+
+def test_sql_dry_run_does_not_resolve_dsn_or_parameters() -> None:
+    result = CliRunner().invoke(
+        cli,
+        ["exec", "--dsn", "invalid", "--sql", "SELECT :value", "--param", "invalid", "--dry-run"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "SELECT :value;" in result.output
+
+
 def test_exec_dry_run_prints_sql_without_executing(
     tmp_path: Path, database: MemoryDatabase
 ) -> None:
@@ -964,11 +1000,13 @@ def test_sqlite_statement_timeout_interrupts_query_and_cleans_up(database: Memor
 def test_engine_options_keep_statement_and_connection_timeouts_separate() -> None:
     mysql = parse_dsn("mysql+pymysql://user:password@host:3306/app")
     postgres = parse_dsn("postgresql+psycopg://user:password@host:5432/app")
+    mssql = parse_dsn("mssql+pymssql://user:password@host:1433/app")
 
     assert _engine_options(mysql, 30, 7) == {
         "connect_args": {"read_timeout": 30, "write_timeout": 30, "connect_timeout": 7}
     }
     assert _engine_options(postgres, 30, 7) == {"connect_args": {"connect_timeout": 7}}
+    assert _engine_options(mssql, 30, 7) == {"connect_args": {"timeout": 30, "login_timeout": 7}}
 
 
 def test_async_client_does_not_block_event_loop(database: MemoryDatabase) -> None:

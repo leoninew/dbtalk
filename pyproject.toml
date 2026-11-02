@@ -17,6 +17,7 @@ dependencies = [
   "dynaconf>=3.3,<4",
   "greenlet>=3.5.5",
   "psycopg[binary]>=3.2,<4",
+  "pymssql>=2.4.5,<2.4.6",
   "pymysql>=1.1,<2",
   "python-dotenv>=1.1,<2",
   "pyyaml>=6.0,<7",

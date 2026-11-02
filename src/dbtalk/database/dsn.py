@@ -18,6 +18,7 @@ SYNC_DRIVERS = {
     "sqlite": "sqlite",
     "mysql": "mysql+pymysql",
     "postgresql": "postgresql+psycopg",
+    "mssql": "mssql+pymssql",
 }
 ASYNC_DRIVERS = {
     "sqlite": "sqlite+aiosqlite",
@@ -74,6 +75,8 @@ def parse_dsn(value: str, *, async_mode: bool = False) -> ParsedDsn:
     if backend not in SYNC_DRIVERS:
         raise DatabaseOperationError(f"unsupported database dialect: {backend}")
     dialect = cast(DatabaseDriver, backend)
+    if async_mode and dialect == "mssql":
+        raise DatabaseOperationError("mssql does not support an async client")
     if not separator:
         if dialect != "sqlite":
             raise DatabaseOperationError(
@@ -147,6 +150,7 @@ def _validate_driver(dialect: DatabaseDriver, driver: str, *, async_mode: bool) 
         "sqlite": {"aiosqlite"} if async_mode else {"pysqlite"},
         "mysql": {"asyncmy"} if async_mode else {"pymysql"},
         "postgresql": {"psycopg"},
+        "mssql": {"pymssql"},
     }[dialect]
     if driver not in allowed:
         raise DatabaseOperationError(

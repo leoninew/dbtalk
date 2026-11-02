@@ -6,6 +6,7 @@ import base64
 import json
 import re
 from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
@@ -17,12 +18,13 @@ from tabulate import tabulate
 
 from .connection import DatabaseClient
 from .dsn import ParsedDsn, dsn_from_environment, parse_dsn
-from .models import DatabaseOperationError, ExecutionResult, QueryResult
+from .models import DatabaseDriver, DatabaseOperationError, ExecutionResult, QueryResult
 
 _TRANSACTION_CONTROL = re.compile(
     r"^(?:START\s+TRANSACTION|BEGIN(?:\s+TRANSACTION)?|COMMIT|ROLLBACK)(?:\s+WORK)?$",
     re.IGNORECASE,
 )
+_TSQL_WORD = re.compile(r"[\w@#$]+")
 
 
 def parse_parameters(values: tuple[str, ...]) -> dict[str, object]:
@@ -71,7 +73,7 @@ def query_from_dsn(
     timeout_seconds: int,
     connect_timeout_seconds: int | None = None,
 ) -> QueryResult:
-    parsed = _resolve_operation_dsn(dsn, environment_name)
+    parsed = resolve_operation_dsn(dsn, environment_name)
     with DatabaseClient(
         parsed,
         timeout_seconds=timeout_seconds,
@@ -107,7 +109,7 @@ def execute_from_dsn(
     timeout_seconds: int,
     connect_timeout_seconds: int | None = None,
 ) -> ExecutionResult:
-    parsed = _resolve_operation_dsn(dsn, environment_name)
+    parsed = resolve_operation_dsn(dsn, environment_name)
     with DatabaseClient(
         parsed,
         timeout_seconds=timeout_seconds,
@@ -130,7 +132,9 @@ def read_sql_file(path: Path) -> str:
     return content
 
 
-def sql_script_statements(script: str) -> tuple[str, ...]:
+def sql_script_statements(script: str, *, dialect: DatabaseDriver | None = None) -> tuple[str, ...]:
+    if dialect == "mssql":
+        return _tsql_batches(script)
     statements: list[str] = []
     for raw in sqlparse.split(script, strip_semicolon=True):
         statement = raw.strip()
@@ -151,10 +155,10 @@ def execute_sql_file_from_dsn(
     timeout_seconds: int,
     connect_timeout_seconds: int | None = None,
 ) -> ExecutionResult:
-    statements = sql_script_statements(read_sql_file(path))
+    parsed = resolve_operation_dsn(dsn, environment_name)
+    statements = sql_script_statements(read_sql_file(path), dialect=parsed.dialect)
     if not statements:
         raise DatabaseOperationError("SQL file contains no executable statements")
-    parsed = _resolve_operation_dsn(dsn, environment_name)
     with DatabaseClient(
         parsed,
         timeout_seconds=timeout_seconds,
@@ -173,7 +177,100 @@ def _significant_sql(statement: str) -> str:
     return " ".join(parts).strip().rstrip(";").strip()
 
 
-def _resolve_operation_dsn(dsn: str | None, environment_name: str | None) -> ParsedDsn:
+@dataclass(frozen=True)
+class _ScriptToken:
+    text: str
+    start: int
+    end: int
+    quoted: bool = False
+
+
+def _tsql_batches(script: str) -> tuple[str, ...]:
+    tokens = _tsql_tokens(script)
+    separators: list[_ScriptToken] = []
+    for index, token in enumerate(tokens):
+        if token.quoted:
+            continue
+        line_start = script.rfind("\n", 0, token.start) + 1
+        line_end = script.find("\n", token.end)
+        if line_end == -1:
+            line_end = len(script)
+        first_on_line = index == 0 or tokens[index - 1].end <= line_start
+        if first_on_line and token.text in {":", "!"}:
+            raise DatabaseOperationError("mssql SQL files do not support SQLCMD commands")
+        if token.text == "$" and script[token.end : token.end + 1] == "(":
+            raise DatabaseOperationError("mssql SQL files do not support SQLCMD variables")
+        if token.text == "GO" and first_on_line:
+            if index + 1 < len(tokens) and tokens[index + 1].start < line_end:
+                raise DatabaseOperationError("mssql SQL files support only standalone GO, not GO n")
+            separators.append(token)
+    batches: list[str] = []
+    start = 0
+    for separator in separators:
+        batch = script[start : separator.start].strip()
+        if any(token.text != ";" for token in _tsql_tokens(batch)):
+            batches.append(batch)
+        start = separator.end
+    batch = script[start:].strip()
+    if any(token.text != ";" for token in _tsql_tokens(batch)):
+        batches.append(batch)
+    return tuple(batches)
+
+
+def _tsql_tokens(script: str) -> list[_ScriptToken]:
+    tokens: list[_ScriptToken] = []
+    offset = 0
+    while offset < len(script):
+        character = script[offset]
+        if character.isspace() or character == "\ufeff":
+            offset += 1
+        elif script.startswith("--", offset):
+            newline = script.find("\n", offset + 2)
+            offset = len(script) if newline == -1 else newline + 1
+        elif script.startswith("/*", offset):
+            offset = _tsql_comment_end(script, offset)
+        elif character in "'\"[":
+            end = _tsql_quoted_end(script, offset, "]" if character == "[" else character)
+            tokens.append(_ScriptToken(script[offset:end], offset, end, quoted=True))
+            offset = end
+        else:
+            word = _TSQL_WORD.match(script, offset)
+            end = word.end() if word is not None else offset + 1
+            tokens.append(_ScriptToken(script[offset:end].upper(), offset, end))
+            offset = end
+    return tokens
+
+
+def _tsql_quoted_end(script: str, start: int, delimiter: str) -> int:
+    offset = start + 1
+    while offset < len(script):
+        if script[offset] == delimiter:
+            if script.startswith(delimiter * 2, offset):
+                offset += 2
+                continue
+            return offset + 1
+        offset += 1
+    raise DatabaseOperationError("mssql SQL file contains an unterminated quoted value")
+
+
+def _tsql_comment_end(script: str, start: int) -> int:
+    depth = 1
+    offset = start + 2
+    while offset < len(script):
+        if script.startswith("/*", offset):
+            depth += 1
+            offset += 2
+        elif script.startswith("*/", offset):
+            depth -= 1
+            offset += 2
+            if depth == 0:
+                return offset
+        else:
+            offset += 1
+    raise DatabaseOperationError("mssql SQL file contains an unterminated comment")
+
+
+def resolve_operation_dsn(dsn: str | None, environment_name: str | None) -> ParsedDsn:
     if (dsn is None) == (environment_name is None):
         raise DatabaseOperationError("provide exactly one of --dsn or --dsn-env")
     return parse_dsn(dsn) if dsn is not None else dsn_from_environment(environment_name)
