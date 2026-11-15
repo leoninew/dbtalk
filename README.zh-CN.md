@@ -71,7 +71,7 @@ uv run dbtalk exec \
   --dry-run
 ```
 
-`query` 读取结果且不提交事务，`exec` 成功后提交。SQLite/MySQL/PostgreSQL 还会设置数据库只读查询会话；SQL Server 复用同一 SQLAlchemy 执行流程，不检查 SQL 语法，也没有数据库强制只读设置。使用 `dbtalk -v <命令>` 或 `dbtalk --verbose <命令>` 可开启 stderr 操作日志和清洗后的异常细节；默认不输出 logging 日志。
+`query` 读取结果且不提交事务，`exec` 成功后提交。SQLite/MySQL/PostgreSQL 还会设置数据库只读查询会话；SQL Server 复用同一 SQLAlchemy 执行流程，不检查 SQL 语法，也没有数据库强制只读设置。操作日志和脱敏后的异常细节默认输出到 stderr；使用 `dbtalk -v <命令>` 可开启 DEBUG 日志。
 
 SQL Server 使用同步 `pymssql`，由 uv 安装，无需系统 ODBC。SQL 文件支持独立行 `GO` 分批。JSONL 传输使用连接默认 schema 和既有目标表；类型与精度支持范围见[数据库手册](docs/database.md#sql-server-jsonl)。
 
@@ -111,7 +111,7 @@ mssql+pymssql://user:password@host:1433/app
 
 每个命令必须在 `--dsn DSN` 和 `--dsn-env NAME` 中选择一个；`--dsn` 保留给直接集成。Agent 只使用 `--dsn-env` 引用 `DBTALK_DSN_*` 名称，优先读取进程变量，缺失时才读取当前目录 `.env`；会话示例直接在命令文件声明变量。不会加载 `.env.local` 或其他 dotenv 变体。默认配置位于 [dbtalk.yaml](dbtalk.yaml)，可使用 `DBTALK_` 前缀的进程环境变量覆盖。
 
-会话命令按 `--database > DSN database > 失败` 解析数据库，显式参数同时覆盖连接库；两者均缺失时在连接前失败。`session kill --yes` 终止一个 `--id` 或目标库当前匹配的客户端会话；可选 `--wait SECONDS` 以整批共享预算确认退出，省略时发送请求后返回。日志由根命令 `dbtalk -v` 开启。权限、结果状态和 MySQL 默认库范围见各引擎手册。
+会话命令按 `--database > DSN database > 失败` 解析数据库，显式参数同时覆盖连接库；两者均缺失时在连接前失败。`session kill --yes` 终止一个 `--id` 或目标库当前匹配的客户端会话；可选 `--wait SECONDS` 以整批共享预算确认退出，省略时发送请求后返回。权限、结果状态和 MySQL 默认库范围见各引擎手册。
 
 自定义完整配置必须包含 `session.poll_interval_seconds`（随附 YAML 值为 `0.1`），可用 `DBTALK_SESSION__POLL_INTERVAL_SECONDS` 覆盖，必须为有限正数。会话查询与终止请求复用 `database.query_timeout_seconds`、`database.exec_timeout_seconds`。
 

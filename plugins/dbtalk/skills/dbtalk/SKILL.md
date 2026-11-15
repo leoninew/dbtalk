@@ -58,7 +58,7 @@ dbtalk exec \
   --dry-run
 ```
 
-`query` 默认输出表格，`--format json` 输出 `columns`、`rows`、`row_count`。SQLite/MySQL/PostgreSQL 使用数据库只读会话，不分析 SQL 文本；写入或 DDL 由数据库拒绝。SQL Server 的差异见下段。`exec` 使用写会话；实际能否写入由数据库判断。参数格式为可重复的 `NAME=JSON_VALUE`。`--sql` 在传入 `--param` 时使用命名绑定；未传参数时按字面量执行，不会识别 SQL 字符串中的 `:name` 或 `:null`。执行 SQL 文件时用 `--file`，不要用 `mysql restore`，也不要把文件内容塞进 `--sql`。`--file` 按字面量执行脚本中的语句，不能与 `--sql` 或 `--param` 同时使用。`--dry-run` 只打印每条 SQL，不执行。默认不输出 logging 日志。需要操作日志和清洗后的异常细节时，在根命令提供 `-v/--verbose`，例如 `dbtalk -v query ...`；日志写入 stderr，子命令不接受该开关。
+`query` 默认输出表格，`--format json` 输出 `columns`、`rows`、`row_count`。SQLite/MySQL/PostgreSQL 使用数据库只读会话，不分析 SQL 文本；写入或 DDL 由数据库拒绝。SQL Server 的差异见下段。`exec` 使用写会话；实际能否写入由数据库判断。参数格式为可重复的 `NAME=JSON_VALUE`。`--sql` 在传入 `--param` 时使用命名绑定；未传参数时按字面量执行，不会识别 SQL 字符串中的 `:name` 或 `:null`。执行 SQL 文件时用 `--file`，不要用 `mysql restore`，也不要把文件内容塞进 `--sql`。`--file` 按字面量执行脚本中的语句，不能与 `--sql` 或 `--param` 同时使用。`--dry-run` 只打印每条 SQL，不执行。操作日志和脱敏异常细节默认写入 stderr；根命令 `-v/--verbose` 开启 DEBUG 日志，子命令不接受该开关。
 
 SQL Server 使用同步 `mssql+pymssql://`，无需系统 ODBC。`query` 读取结果且不提交，`exec` 成功后提交；两者复用现有 SQLAlchemy 调用，不进行 SQL 语法过滤。SQL Server 未设置数据库强制只读。驱动的语句和登录超时有进程级影响，不支持异步客户端。
 

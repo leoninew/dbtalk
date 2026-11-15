@@ -71,7 +71,7 @@ uv run dbtalk exec \
   --dry-run
 ```
 
-`query` returns rows without committing; `exec` commits successful execution. SQLite/MySQL/PostgreSQL also configure database read-only query sessions. SQL Server uses the same SQLAlchemy execution flow without SQL syntax restrictions or database-enforced read-only mode. Use `dbtalk -v <command>` or `dbtalk --verbose <command>` to enable operation logs on stderr and sanitized exception details. Logging is silent by default.
+`query` returns rows without committing; `exec` commits successful execution. SQLite/MySQL/PostgreSQL also configure database read-only query sessions. SQL Server uses the same SQLAlchemy execution flow without SQL syntax restrictions or database-enforced read-only mode. Operation logs and sanitized exception details are written to stderr by default; `dbtalk -v <command>` enables debug logging.
 
 SQL Server uses synchronous `pymssql`, installed by uv without system ODBC. SQL files support standalone `GO` batch separators. JSONL transfer uses the connection's default schema and existing target tables; supported types and precision limits are documented in the [database guide](docs/database.md#sql-server-jsonl).
 
@@ -111,7 +111,7 @@ mssql+pymssql://user:password@host:1433/app
 
 Every command accepts exactly one of `--dsn DSN` or `--dsn-env NAME`; `--dsn` remains available for direct integrations. Agent workflows use only `--dsn-env` with a `DBTALK_DSN_*` name. Process variables take precedence over the current `.env`; session examples declare variables directly in the command file. `.env.local` and other dotenv variants are not loaded. Defaults are in [dbtalk.yaml](dbtalk.yaml) and can be overridden with `DBTALK_` process environment variables.
 
-Session commands require a database: `--database` overrides the DSN database and the connection target; missing both fails before connecting. `session kill --yes` targets one `--id` or the current database's matching client sessions. Add `--wait SECONDS` to confirm exit within one shared batch budget; omit it to return after sending requests. Logs require root `dbtalk -v`. See the engine guides for permissions, results, and MySQL's default-database scope.
+Session commands require a database: `--database` overrides the DSN database and the connection target; missing both fails before connecting. `session kill --yes` targets one `--id` or the current database's matching client sessions. Add `--wait SECONDS` to confirm exit within one shared batch budget; omit it to return after sending requests. See the engine guides for permissions, results, and MySQL's default-database scope.
 
 `session.poll_interval_seconds` is required in custom configuration (bundled value: `0.1`); override it with `DBTALK_SESSION__POLL_INTERVAL_SECONDS`. It must be finite and positive. Session queries and termination requests reuse `database.query_timeout_seconds` and `database.exec_timeout_seconds`.
 

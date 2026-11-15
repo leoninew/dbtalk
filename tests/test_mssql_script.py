@@ -97,7 +97,7 @@ def test_unsupported_scripts_fail_before_engine_creation(
 def test_lexical_errors_do_not_echo_script() -> None:
     with pytest.raises(DatabaseOperationError) as captured:
         mssql_script_batches("SELECT 'private_script_sentinel")
-    assert "private_script_sentinel" not in format_cli_error(captured.value, verbose=True)
+    assert "private_script_sentinel" not in format_cli_error(captured.value)
 
 
 def test_dry_run_matches_execution_batches_without_engine(

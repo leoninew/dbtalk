@@ -198,19 +198,17 @@ def driver_error_detail(error: BaseException) -> str:
     return _strip_sqlalchemy_noise(text)
 
 
-def format_cli_error(error: BaseException, *, verbose: bool) -> str:
-    """Render a CLI error, optionally appending sanitized exception details."""
+def format_cli_error(error: BaseException) -> str:
+    """Render a CLI error with sanitized exception details."""
 
     message = str(error)
-    if not verbose:
-        return message
-    detail = sanitize_error_detail(_verbose_error_detail(error))
+    detail = sanitize_error_detail(_error_detail(error))
     if not detail or detail in message:
         return message
     return f"{message}: {detail}"
 
 
-def _verbose_error_detail(error: BaseException) -> str:
+def _error_detail(error: BaseException) -> str:
     outer = str(error)
     for current in _exception_chain(error)[1:]:
         raw = _strip_sqlalchemy_noise(str(current))

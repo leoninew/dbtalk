@@ -1,5 +1,6 @@
 """Test composition: explicit settings and owned SQLite memory databases."""
 
+import logging
 import os
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack
@@ -7,6 +8,7 @@ from contextlib import ExitStack
 import pytest
 
 from dbtalk import cli as cli_module
+from dbtalk.logging_config import configure_logging
 from dbtalk.settings import (
     DatabaseTransferConfig,
     DumpRestoreConfig,
@@ -47,6 +49,19 @@ def real_cli_settings(cli_settings: None, monkeypatch: pytest.MonkeyPatch) -> No
         if name.startswith("DBTALK_"):
             monkeypatch.delenv(name)
     monkeypatch.setattr(cli_module, "load_settings", load_settings)
+
+
+@pytest.fixture
+def isolated_cli_logging(monkeypatch: pytest.MonkeyPatch) -> None:
+    root = logging.getLogger()
+    monkeypatch.setattr(root, "handlers", [])
+    monkeypatch.setattr(root, "level", root.level)
+
+    def configure(level: str, log_format: str) -> None:
+        root.handlers.clear()
+        configure_logging(level, log_format)
+
+    monkeypatch.setattr(cli_module, "configure_logging", configure)
 
 
 @pytest.fixture

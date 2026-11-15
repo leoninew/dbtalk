@@ -10,10 +10,6 @@ from typing import Any
 
 import click
 
-from dbtalk.context import DbtalkContext
-
-logger = logging.getLogger("dbtalk")
-
 # Never log arbitrary Click parameters: DSNs, SQL, and password sources are private.
 LOGGED_OPTIONS = (
     "name",
@@ -42,7 +38,7 @@ LOGGED_OPTIONS = (
 
 
 class DbtalkCommand(click.Command):
-    """Leaf command with lifecycle logs and error details controlled by the root."""
+    """Leaf command with lifecycle logs and sanitized error details."""
 
     def __init__(self, *args: Any, log_lifecycle: bool = True, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -51,20 +47,18 @@ class DbtalkCommand(click.Command):
     def invoke(self, ctx: click.Context) -> Any:
         from dbtalk.database.models import format_cli_error
 
-        current = ctx.find_root().obj
-        verbose = isinstance(current, DbtalkContext) and current.verbose
         try:
-            with command_logging(ctx, enabled=verbose and self.log_lifecycle):
+            with command_logging(ctx, enabled=self.log_lifecycle):
                 return super().invoke(ctx)
         except (click.Abort, click.exceptions.Exit, click.UsageError):
             raise
         except click.ClickException as error:
-            formatted = format_cli_error(error, verbose=verbose)
+            formatted = format_cli_error(error)
             if formatted == str(error):
                 raise
             raise click.ClickException(formatted) from error
         except RuntimeError as error:
-            raise click.ClickException(format_cli_error(error, verbose=verbose)) from error
+            raise click.ClickException(format_cli_error(error)) from error
 
 
 class DbtalkGroup(click.Group):
@@ -90,16 +84,16 @@ def command_logging(ctx: click.Context, *, enabled: bool) -> Iterator[None]:
     )
     operation = ctx.command_path
     started = monotonic()
-    logger.info("%s started%s", operation, fields)
+    logging.info("%s started%s", operation, fields)
     try:
         yield
     except (click.Abort, KeyboardInterrupt, EOFError):
-        logger.warning(
+        logging.warning(
             "%s cancelled%s elapsed_ms=%d", operation, fields, (monotonic() - started) * 1000
         )
         raise
     except click.exceptions.Exit as error:
-        logger.log(
+        logging.log(
             logging.INFO if error.exit_code == 0 else logging.ERROR,
             "%s %s%s elapsed_ms=%d",
             operation,
@@ -109,9 +103,11 @@ def command_logging(ctx: click.Context, *, enabled: bool) -> Iterator[None]:
         )
         raise
     except Exception:
-        logger.error("%s failed%s elapsed_ms=%d", operation, fields, (monotonic() - started) * 1000)
+        logging.error(
+            "%s failed%s elapsed_ms=%d", operation, fields, (monotonic() - started) * 1000
+        )
         raise
     else:
-        logger.info(
+        logging.info(
             "%s completed%s elapsed_ms=%d", operation, fields, (monotonic() - started) * 1000
         )

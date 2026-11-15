@@ -12,7 +12,6 @@ from dbtalk.settings import Settings
 @dataclass(frozen=True)
 class DbtalkContext:
     settings: Settings
-    verbose: bool
 
 
 def dbtalk_context(ctx: click.Context) -> DbtalkContext:

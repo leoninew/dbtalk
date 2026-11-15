@@ -385,7 +385,6 @@ def test_database_cli_timezone_and_timeouts(settings: Settings) -> None:
             settings,
             database=DatabaseTransferConfig(query_timeout_seconds=15, exec_timeout_seconds=45),
         ),
-        verbose=False,
     )
     assert database_cli.query_timeout_from_context(context, None) == 15
     assert database_cli.exec_timeout_from_context(context, None) == 45

@@ -66,7 +66,12 @@ def test_missing_database_never_creates_an_engine(
 )
 @pytest.mark.parametrize("verbose", [False, True])
 def test_cli_target_override_and_scoped_kill(
-    monkeypatch: pytest.MonkeyPatch, backend: str, module: object, dsn: str, verbose: bool
+    monkeypatch: pytest.MonkeyPatch,
+    backend: str,
+    module: object,
+    dsn: str,
+    verbose: bool,
+    isolated_cli_logging: None,
 ) -> None:
     operation = Mock(return_value=SessionKillReport("app", (SessionKillResult(12, "requested"),)))
     monkeypatch.setattr(module, "kill_sessions", operation)
@@ -93,8 +98,8 @@ def test_cli_target_override_and_scoped_kill(
     assert operation.call_args.kwargs["session_id"] == 12
     assert operation.call_args.kwargs["wait_seconds"] == 0.25
     assert "requested=1" in result.stdout
-    assert ("database='app'" in result.stderr) is verbose
-    assert ("session_id=12" in result.stderr) is verbose
+    assert "database='app'" in result.stderr
+    assert "session_id=12" in result.stderr
     assert "private" not in result.output
 
 
@@ -124,7 +129,12 @@ def test_confirmation_and_wait_are_checked_before_io(
 )
 @pytest.mark.parametrize("verbose", [False, True])
 def test_partial_results_preserve_stdout_and_root_logging(
-    monkeypatch: pytest.MonkeyPatch, backend: str, module: object, dsn: str, verbose: bool
+    monkeypatch: pytest.MonkeyPatch,
+    backend: str,
+    module: object,
+    dsn: str,
+    verbose: bool,
+    isolated_cli_logging: None,
 ) -> None:
     report = SessionKillReport(
         "app",
@@ -153,8 +163,8 @@ def test_partial_results_preserve_stdout_and_root_logging(
     assert result.exit_code == 1
     assert "requested=1" in result.stdout and "failed=1" in result.stdout
     assert "see results" in result.stderr
-    assert ("targets_selected" in result.stderr) is verbose
-    assert ("wait_seconds=1.0" in result.stderr) is verbose
+    assert "targets_selected" in result.stderr
+    assert "wait_seconds=1.0" in result.stderr
     assert "private" not in result.output
     assert dsn not in result.output
 

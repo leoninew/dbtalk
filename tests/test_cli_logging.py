@@ -21,6 +21,8 @@ from dbtalk.database.models import DatabaseOperationError
 from dbtalk.postgres.owner import OwnershipPreview
 from tests.sqlite_helpers import MemoryDatabase
 
+pytestmark = pytest.mark.usefixtures("isolated_cli_logging")
+
 
 def test_query_keeps_json_on_stdout_and_omits_sql_and_parameters_from_logs() -> None:
     statement = "SELECT :private_value AS value"
@@ -68,12 +70,10 @@ def test_failed_exec_logs_one_failure_without_sql_or_values(verbose: list[str]) 
 
     assert result.exit_code == 1
     assert result.stdout == ""
-    assert result.stderr.count("cli exec started") == (1 if verbose else 0)
-    assert result.stderr.count("cli exec failed") == (1 if verbose else 0)
-    if verbose:
-        assert "ERROR" in result.stderr
-    else:
-        assert result.stderr == "Error: database execution failed\n"
+    assert result.stderr.count("cli exec started") == 1
+    assert result.stderr.count("cli exec failed") == 1
+    assert "ERROR" in result.stderr
+    assert "no such table: missing_table" in result.stderr
     assert "database execution failed" in result.stderr
     assert "completed" not in result.stderr
     for private in (statement, "private_value", "private-input", "[SQL:", "[parameters:"):
@@ -240,7 +240,7 @@ def test_postgres_backup_logs_lifecycle(
 
 
 @pytest.mark.parametrize("verbose", [[], ["-v"]])
-def test_transfer_logging_is_opt_in_without_duplicate_events(
+def test_transfer_logging_has_no_duplicate_events(
     tmp_path: Path, verbose: list[str], sqlite_database: Callable[[], MemoryDatabase]
 ) -> None:
     source = sqlite_database()
@@ -275,11 +275,9 @@ def test_transfer_logging_is_opt_in_without_duplicate_events(
         )
 
         assert result.exit_code == 0, result.output
-        assert result.stderr.count(f"database {command} started") == (1 if verbose else 0)
-        assert result.stderr.count(f"database {command} completed") == (1 if verbose else 0)
+        assert result.stderr.count(f"database {command} started") == 1
+        assert result.stderr.count(f"database {command} completed") == 1
         assert f"cli {command} started" not in result.stderr
-        if not verbose:
-            assert result.stderr == ""
     with closing(target.connect()) as connection:
         assert connection.execute("SELECT id FROM items").fetchall() == [(1,)]
 
@@ -289,12 +287,12 @@ def test_logging_respects_format_level_and_verbose_without_duplicate_records(
 ) -> None:
     runner = CliRunner()
     for verbose, level, expected_lines in (
-        ([], "INFO", 0),
+        ([], "INFO", 2),
         (["-v"], "INFO", 2),
-        ([], "DEBUG", 0),
-        (["-v"], "WARNING", 0),
+        ([], "DEBUG", 2),
+        ([], "WARNING", 0),
         (["--verbose"], "INFO", 2),
-        ([], "INFO", 0),
+        ([], "INFO", 2),
     ):
         result = runner.invoke(
             cli,
@@ -312,7 +310,7 @@ def test_logging_respects_format_level_and_verbose_without_duplicate_records(
 
 
 @pytest.mark.parametrize("verbose", [[], ["-v"]])
-def test_transfer_failure_logs_are_also_opt_in(tmp_path: Path, verbose: list[str]) -> None:
+def test_transfer_failure_logs_are_enabled_by_default(tmp_path: Path, verbose: list[str]) -> None:
     archive = tmp_path / "invalid.jsonl"
     archive.write_text("invalid JSON\n", encoding="utf-8")
     result = CliRunner().invoke(
@@ -334,9 +332,7 @@ def test_transfer_failure_logs_are_also_opt_in(tmp_path: Path, verbose: list[str
     assert result.exit_code == 1
     assert result.stdout == ""
     assert "Error: invalid JSONL at line 1" in result.stderr
-    assert result.stderr.count("database import failed") == (1 if verbose else 0)
-    if not verbose:
-        assert result.stderr == "Error: invalid JSONL at line 1\n"
+    assert result.stderr.count("database import failed") == 1
 
 
 def test_dsn_display_omits_sensitive_query_without_changing_connection_url() -> None:

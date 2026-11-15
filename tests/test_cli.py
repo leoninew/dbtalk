@@ -81,18 +81,18 @@ def test_verbose_option_is_only_on_root_command() -> None:
 
 
 @pytest.mark.parametrize("option", ["-v", "--verbose"])
-def test_root_verbose_enables_logging(option: str) -> None:
+def test_root_verbose_enables_debug_logging(option: str, isolated_cli_logging: None) -> None:
     runner = CliRunner()
     quiet = runner.invoke(cli, ["exec", "--dsn", "sqlite:///:memory:", "--sql", "SELECT 1"])
     assert quiet.exit_code == 0, quiet.output
-    assert quiet.stderr == ""
+    assert "cli exec started" in quiet.stderr
 
     verbose = runner.invoke(
         cli,
         [option, "exec", "--dsn", "sqlite:///:memory:", "--sql", "SELECT 1"],
     )
     assert verbose.exit_code == 0, verbose.output
-    assert logging.getLogger().level == logging.INFO
+    assert logging.getLogger().level == logging.DEBUG
     assert "cli exec started" in verbose.stderr
     assert "cli exec completed" in verbose.stderr
 
@@ -140,7 +140,7 @@ def test_driver_error_detail_includes_exception_type_and_strips_sqlalchemy_noise
     assert "Background on this error" not in detail
 
 
-def test_format_cli_error_appends_exception_details_only_when_verbose() -> None:
+def test_format_cli_error_appends_sanitized_exception_details() -> None:
     cause = SQLAlchemyError(
         "(sqlite3.OperationalError) missing relation\n"
         "[SQL: UPDATE application SET name=?]\n"
@@ -148,8 +148,7 @@ def test_format_cli_error_appends_exception_details_only_when_verbose() -> None:
     )
     error = DatabaseOperationError("database execution failed")
     error.__cause__ = cause
-    assert format_cli_error(error, verbose=False) == "database execution failed"
-    verbose = format_cli_error(error, verbose=True)
+    verbose = format_cli_error(error)
     assert verbose.startswith("database execution failed: sqlalchemy.exc.SQLAlchemyError:")
     assert "[SQL:" not in verbose
     assert "[parameters:]" not in verbose
@@ -164,7 +163,7 @@ def test_format_cli_error_does_not_render_orig_as_a_specific_error() -> None:
     )
     error = DatabaseOperationError("database execution failed")
     error.__cause__ = cause
-    verbose = format_cli_error(error, verbose=True)
+    verbose = format_cli_error(error)
     assert verbose.startswith("database execution failed:")
     assert "StatementError" in verbose
     assert "[parameters:]" not in verbose
@@ -175,11 +174,22 @@ def test_format_cli_error_redacts_secrets_and_skips_duplicate_detail() -> None:
     secret_cause = SQLAlchemyError("mysql+pymysql://admin:secret@db.example/app")
     wrapped = DatabaseOperationError("database execution failed")
     wrapped.__cause__ = secret_cause
-    verbose = format_cli_error(wrapped, verbose=True)
+    verbose = format_cli_error(wrapped)
     assert "database execution failed" in verbose
     assert "secret" not in verbose
     assert "<redacted>" in verbose
 
     dump_error = click.ClickException("mysqldump failed: Access denied")
     dump_error.__cause__ = _DriverError("Access denied")
-    assert format_cli_error(dump_error, verbose=True) == "mysqldump failed: Access denied"
+    assert format_cli_error(dump_error) == "mysqldump failed: Access denied"
+
+
+def test_logging_configuration_preserves_existing_handlers() -> None:
+    from dbtalk.logging_config import configure_logging
+
+    root = logging.getLogger()
+    handlers = list(root.handlers)
+    level = root.level
+    configure_logging("DEBUG", "%(message)s")
+    assert root.handlers == handlers
+    assert root.level == level

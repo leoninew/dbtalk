@@ -914,7 +914,7 @@ def test_query_and_exec_cli_session_modes_and_timeouts(database: MemoryDatabase)
     )
     assert query_write.exit_code != 0
     assert "database query failed" in query_write.output
-    assert "attempt to write a readonly database" not in query_write.output
+    assert "attempt to write a readonly database" in query_write.output
 
     verbose_query = runner.invoke(
         cli,
@@ -947,7 +947,7 @@ def test_query_and_exec_cli_session_modes_and_timeouts(database: MemoryDatabase)
     assert "x>=1" in invalid_timeout.output
 
 
-def test_exec_verbose_shows_sanitized_exception_details(database: MemoryDatabase) -> None:
+def test_exec_shows_sanitized_exception_details(database: MemoryDatabase) -> None:
     dsn = database.dsn
     runner = CliRunner()
     sql = "UPDATE missing SET name = :name WHERE id = :id"
@@ -958,7 +958,7 @@ def test_exec_verbose_shows_sanitized_exception_details(database: MemoryDatabase
     )
     assert default.exit_code != 0
     assert "database execution failed" in default.output
-    assert "OperationalError" not in default.output
+    assert "sqlalchemy.exc.OperationalError" in default.output
     assert "secret" not in default.output
     assert "[parameters:]" not in default.output
 
@@ -983,6 +983,30 @@ def test_exec_verbose_shows_sanitized_exception_details(database: MemoryDatabase
     assert "secret" not in verbose.output
     assert "[parameters:]" not in verbose.output
     assert "[SQL:" not in verbose.output
+
+
+def test_exec_file_reports_constraint_failure_and_rolls_back(
+    database: MemoryDatabase, tmp_path: Path
+) -> None:
+    with closing(database.connect()) as connection:
+        connection.execute("CREATE TABLE items (id INTEGER PRIMARY KEY)")
+        connection.execute("INSERT INTO items VALUES (1)")
+        connection.commit()
+    script = tmp_path / "duplicate.sql"
+    script.write_text(
+        "INSERT INTO items VALUES (2); INSERT INTO items VALUES (1);", encoding="utf-8"
+    )
+
+    result = CliRunner().invoke(cli, ["exec", "--dsn", database.dsn, "--file", str(script)])
+
+    assert result.exit_code != 0
+    assert result.stdout == ""
+    assert "sqlalchemy.exc.IntegrityError" in result.stderr
+    assert "UNIQUE constraint failed: items.id" in result.stderr
+    assert "[SQL:" not in result.stderr
+    assert "[parameters:" not in result.stderr
+    with closing(database.connect()) as connection:
+        assert connection.execute("SELECT id FROM items").fetchall() == [(1,)]
 
 
 def test_sqlite_statement_timeout_interrupts_query_and_cleans_up(database: MemoryDatabase) -> None:
