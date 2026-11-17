@@ -21,11 +21,11 @@ bash scripts/backup.sh clean
 bash scripts/backup.sh clean --no-dry-run
 ```
 
-备份按连接名和数据库分目录保存，文件名使用本地时间戳 `YYYYMMDD-HHMMSS`：
+备份按 `<连接名>_<数据库名>` 分目录保存，文件名使用本地时间戳 `YYYYMMDD-HHMMSS`：
 
 ```text
 data/
-  leon_postgres_casdoor/
+  think_postgres_casdoor/
     20261001-150000.dump
     20261002-150000.dump
   think_mysql_gitea/
@@ -36,7 +36,7 @@ data/
     20261002-150000.md
 ```
 
-目录名为 `<连接名>_<数据库名>`。PostgreSQL 使用 `.dump` 自定义归档，MySQL 使用 gzip 压缩的 `.sql.gz`。已有备份会保留，同一秒内重复运行会给备份和清单的时间戳追加 `-01` 等序号。
+PostgreSQL 使用 `.dump` 自定义归档，MySQL 使用 gzip 压缩的 `.sql.gz`。已有备份会保留，同一秒内重复运行会给备份和清单的时间戳追加 `-01` 等序号。
 
 备份清单记录成功、复用和失败的结果，文件路径相对于清单目录，不包含 DSN 凭证。
 
